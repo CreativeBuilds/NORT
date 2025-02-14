@@ -1,8 +1,7 @@
 import { ASSISTANT, client, END_HEADER_ID, SEED, START_HEADER_ID, SYSTEM, USER } from "../constants";
 
-export async function chat(prompt: string, user_settings = {}): Promise<[string, null] | [null, string]> {
+export async function chat(prompt: string, user_settings = {}, should_stream = false): Promise<[string, null] | [null, string]> {
     if (!prompt) return [null, "NO_PROMPT"];
-    console.log(prompt.slice(0, 100));
     let settings = {
         model: "deepseek/deepseek-chat:free",
         stream: true,
@@ -22,22 +21,20 @@ export async function chat(prompt: string, user_settings = {}): Promise<[string,
     const stream = await client.completions.create({ ...settings, ...user_settings });
 
     let buffer = '';
-    const STREAM_LIVE = true;
-    console.log("here")
     try {
         for await (const chunk of stream as AsyncIterable<any>) {
-        const text = chunk.choices[0]?.text || "";
-        buffer += text;
-        
-        if (STREAM_LIVE) {
-            process.stdout.write(text);
+            const text = chunk.choices[0]?.text || "";
+            buffer += text;
+
+            if (should_stream) {
+                process.stdout.write(text);
+            }
         }
-    }
     } catch (err) {
-        console.log("Got an error", err)
         return [null, err];
     }
 
-    process.stdout.write("\n");
+    if(should_stream) process.stdout.write("\n");
+
     return [buffer, null];
 }
