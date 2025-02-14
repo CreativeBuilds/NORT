@@ -1,0 +1,8 @@
+{
+  "dependencies": {
+    "inquirer": "^12.4.1",
+    "irc-server": "^0.0.4",
+    "openai": "^4.83.0",
+    "ws": "^8.18.0"
+  }
+}
