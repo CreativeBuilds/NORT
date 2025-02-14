@@ -1,8 +1,7 @@
-import { USER } from "irc-server/commands";
-import { ASSISTANT, SYSTEM } from "../constants";
+import { ASSISTANT, SYSTEM, USER } from "../constants";
 
 // Helper Functions
-export function ensure(text, name = 'assistant') {
+export function ensure(text: string, name = 'assistant') {
     let token;
     switch (name) {
         case 'assistant': token = ASSISTANT; break;

@@ -1,7 +1,6 @@
-import { USER } from "irc-server/commands";
-import { ASSISTANT, SYSTEM } from "../constants";
+import { ASSISTANT, SYSTEM, USER } from "../constants";
 
-function determineLastSpeaker(text) {
+function determineLastSpeaker(text: string) {
     const lastAssistant = text.lastIndexOf(ASSISTANT);
     const lastUser = text.lastIndexOf(USER);
     const lastSystem = text.lastIndexOf(SYSTEM);
