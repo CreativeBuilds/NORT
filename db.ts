@@ -462,4 +462,35 @@ export function canUserAccessConversation(conversationId: number, userId: number
   }
 }
 
+export function getLLMParticipants(): [Participant[] | null, Error | null] {
+  try {
+    const stmt = db.prepare('SELECT * FROM participants WHERE type = "llm" ORDER BY name ASC');
+    const participants = stmt.all() as Participant[];
+    
+    // Parse metadata JSON strings
+    return [participants.map(p => ({
+      ...p,
+      metadata: p.metadata ? JSON.parse(p.metadata as unknown as string) : undefined
+    })), null];
+  } catch (error) {
+    return [null, error as Error];
+  }
+}
+
+export function getParticipantById(id: number): [Participant | null, Error | null] {
+  try {
+    const stmt = db.prepare('SELECT * FROM participants WHERE id = ?');
+    const participant = stmt.get(id) as Participant | undefined;
+    
+    if (!participant) return [null, null];
+    
+    return [{
+      ...participant,
+      metadata: participant.metadata ? JSON.parse(participant.metadata as unknown as string) : undefined
+    }, null];
+  } catch (error) {
+    return [null, error as Error];
+  }
+}
+
 export default db; 

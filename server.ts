@@ -16,9 +16,11 @@ import {
 	createShareLink,
 	getConversationByShareToken,
 	forkConversation,
-	canUserAccessConversation
+	canUserAccessConversation,
+	getLLMParticipants
 } from './db'
 import crypto from 'crypto'
+import messageQueue from './queues/messageQueue'
 
 const app = express()
 app.use(express.json())
@@ -42,6 +44,24 @@ interface AuthenticatedRequest extends Request {
 		canRead: boolean;
 		canWrite: boolean;
 	};
+}
+
+// SSE setup
+const clients = new Map<number, Set<Response>>();
+
+// Export SSE event sender for queue processing
+export function sendSSEEvent(conversationId: number, event: { type: string, data: any }): void {
+	const conversationClients = clients.get(conversationId);
+	if (!conversationClients) return;
+
+	const eventData = `data: ${JSON.stringify(event)}\n\n`;
+	conversationClients.forEach(client => {
+		try {
+			client.write(eventData);
+		} catch (err) {
+			console.error('Error sending SSE:', err);
+		}
+	});
 }
 
 // Middleware
@@ -72,6 +92,22 @@ const ensureParticipant = async (req: AuthenticatedRequest, res: Response, next:
 		if (error || !participant) { res.status(500).json({ error: 'Failed to create participant record' }); return }
 		
 		req.participant = participant
+		next()
+	} catch (err) {
+		res.status(500).json({ error: (err as Error).message }); return
+	}
+}
+
+// Middleware to check conversation access
+const checkConversationAccess = async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+	const conversationId = parseInt(req.params.id)
+	if (isNaN(conversationId)) { res.status(400).json({ error: 'Invalid conversation ID' }); return }
+
+	try {
+		const [access, error] = await canUserAccessConversation(conversationId, req.user!.id)
+		if (error || !access) { res.status(404).json({ error: 'Conversation not found' }); return }
+
+		req.conversationAccess = access
 		next()
 	} catch (err) {
 		res.status(500).json({ error: (err as Error).message }); return
@@ -170,8 +206,51 @@ app.get('/conversations', authenticate, ensureParticipant, async (req: Authentic
 	}
 })
 
+// Get available LLM participants
+app.get('/participants/llm', authenticate, async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+	try {
+		const [participants, error] = await getLLMParticipants();
+		if (error) { res.status(500).json({ error: error.message }); return }
+
+		res.json({ participants }); return
+	} catch (err) {
+		res.status(500).json({ error: (err as Error).message }); return
+	}
+});
+
+// Subscribe to conversation events
+app.get('/chat/:id/events', authenticate, checkConversationAccess, async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+	const conversationId = parseInt(req.params.id);
+	
+	if (!req.conversationAccess?.canRead) { res.status(403).json({ error: 'Not authorized to access this conversation' }); return }
+
+	// Set up SSE connection
+	res.setHeader('Content-Type', 'text/event-stream');
+	res.setHeader('Cache-Control', 'no-cache');
+	res.setHeader('Connection', 'keep-alive');
+	res.flushHeaders();
+
+	// Add client to tracking
+	if (!clients.has(conversationId)) {
+		clients.set(conversationId, new Set());
+	}
+	clients.get(conversationId)!.add(res);
+
+	// Handle client disconnect
+	req.on('close', () => {
+		const conversationClients = clients.get(conversationId);
+		if (conversationClients) {
+			conversationClients.delete(res);
+			if (conversationClients.size === 0) {
+				clients.delete(conversationId);
+			}
+		}
+	});
+});
+
+// Modify chat endpoints to use message queue
 app.post('/chat', authenticate, ensureParticipant, async (req: AuthenticatedRequest, res: Response): Promise<void> => {
-	const { content } = req.body
+	const { content, desired_participant_id } = req.body
 	if (!content?.trim()) { res.status(400).json({ error: 'Message content is required' }); return }
 
 	try {
@@ -187,9 +266,24 @@ app.post('/chat', authenticate, ensureParticipant, async (req: AuthenticatedRequ
 		)
 		if (messageError || !message) { res.status(500).json({ error: 'Failed to create message' }); return }
 
-		// Get all messages (will only be one in this case)
+		// Get all messages
 		const [messages, messagesError] = await getConversationMessages(conversation.id)
 		if (messagesError || !messages) { res.status(500).json({ error: 'Failed to fetch messages' }); return }
+
+		// Notify clients about new message
+		sendSSEEvent(conversation.id, {
+			type: 'message_added',
+			data: { message }
+		});
+
+		// If an LLM participant is requested, queue their response
+		if (desired_participant_id) {
+			await messageQueue.add('process-llm-response', {
+				conversationId: conversation.id,
+				messageId: message.id,
+				participantId: desired_participant_id
+			});
+		}
 
 		res.status(201).json({
 			conversation,
@@ -198,11 +292,11 @@ app.post('/chat', authenticate, ensureParticipant, async (req: AuthenticatedRequ
 	} catch (err) {
 		res.status(500).json({ error: (err as Error).message }); return
 	}
-})
+});
 
 app.post('/chat/:id', authenticate, ensureParticipant, async (req: AuthenticatedRequest, res: Response): Promise<void> => {
 	const conversationId = parseInt(req.params.id)
-	const { content, parent_id } = req.body
+	const { content, parent_id, desired_participant_id } = req.body
 
 	if (isNaN(conversationId)) { res.status(400).json({ error: 'Invalid conversation ID' }); return }
 	if (!content?.trim()) { res.status(400).json({ error: 'Message content is required' }); return }
@@ -225,6 +319,21 @@ app.post('/chat/:id', authenticate, ensureParticipant, async (req: Authenticated
 		const [messages, messagesError] = await getConversationMessages(conversationId)
 		if (messagesError || !messages) { res.status(500).json({ error: 'Failed to fetch messages' }); return }
 
+		// Notify clients about new message
+		sendSSEEvent(conversationId, {
+			type: 'message_added',
+			data: { message }
+		});
+
+		// If an LLM participant is requested, queue their response
+		if (desired_participant_id) {
+			await messageQueue.add('process-llm-response', {
+				conversationId,
+				messageId: message.id,
+				participantId: desired_participant_id
+			});
+		}
+
 		res.json({
 			conversation,
 			messages
@@ -232,23 +341,7 @@ app.post('/chat/:id', authenticate, ensureParticipant, async (req: Authenticated
 	} catch (err) {
 		res.status(500).json({ error: (err as Error).message }); return
 	}
-})
-
-// Middleware to check conversation access
-const checkConversationAccess = async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
-	const conversationId = parseInt(req.params.id)
-	if (isNaN(conversationId)) { res.status(400).json({ error: 'Invalid conversation ID' }); return }
-
-	try {
-		const [access, error] = await canUserAccessConversation(conversationId, req.user!.id)
-		if (error || !access) { res.status(404).json({ error: 'Conversation not found' }); return }
-
-		req.conversationAccess = access
-		next()
-	} catch (err) {
-		res.status(500).json({ error: (err as Error).message }); return
-	}
-}
+});
 
 // Sharing endpoints
 app.post('/chat/:id/share', authenticate, checkConversationAccess, async (req: AuthenticatedRequest, res: Response): Promise<void> => {

@@ -70,7 +70,8 @@ The Chat API server runs on http://localhost:3000
 **Headers:** `Authorization: Bearer <token>`
 ```json
 {
-    "content": "Hello, AI!"
+    "content": "Hello, AI!",
+    "desired_participant_id": 123  // Optional: ID of the LLM participant you want to respond
 }
 ```
 **Response (201):**
@@ -102,7 +103,8 @@ The Chat API server runs on http://localhost:3000
 ```json
 {
     "content": "Tell me more!",
-    "parent_id": 1  // Optional, for threaded replies
+    "parent_id": 1,  // Optional, for threaded replies
+    "desired_participant_id": 123  // Optional: ID of the LLM participant you want to respond
 }
 ```
 **Response (200):**
@@ -116,6 +118,122 @@ The Chat API server runs on http://localhost:3000
     },
     "messages": [
         // All messages in conversation, ordered by creation time
+    ]
+}
+```
+
+### Real-time Updates
+
+#### Subscribe to Conversation Events
+**GET** `/chat/:id/events`  
+**Headers:** `Authorization: Bearer <token>`
+
+This endpoint uses Server-Sent Events (SSE) to push real-time updates to clients.
+
+**Event Types:**
+
+1. `message_added`
+```json
+{
+    "type": "message_added",
+    "data": {
+        "message": {
+            "id": 2,
+            "conversation_id": 1,
+            "participant_id": 123,
+            "content": "New message content",
+            "participant_name": "GPT-4",
+            "participant_type": "llm",
+            "created_at": "2024-03-21T12:01:00Z"
+        }
+    }
+}
+```
+
+2. `typing_started`
+```json
+{
+    "type": "typing_started",
+    "data": {
+        "participant_id": 123,
+        "participant_name": "GPT-4",
+        "participant_type": "llm"
+    }
+}
+```
+
+3. `typing_stopped`
+```json
+{
+    "type": "typing_stopped",
+    "data": {
+        "participant_id": 123,
+        "participant_name": "GPT-4",
+        "participant_type": "llm"
+    }
+}
+```
+
+**JavaScript Example:**
+```javascript
+const eventSource = new EventSource('/chat/1/events', {
+    headers: {
+        'Authorization': 'Bearer your-token'
+    }
+});
+
+eventSource.onmessage = (event) => {
+    const data = JSON.parse(event.data);
+    switch (data.type) {
+        case 'message_added':
+            console.log('New message:', data.data.message);
+            break;
+        case 'typing_started':
+            console.log('Participant started typing:', data.data.participant_name);
+            break;
+        case 'typing_stopped':
+            console.log('Participant stopped typing:', data.data.participant_name);
+            break;
+    }
+};
+
+eventSource.onerror = (error) => {
+    console.error('SSE Error:', error);
+    eventSource.close();
+};
+```
+
+### Participants
+
+#### List Available LLM Participants
+**GET** `/participants/llm`  
+**Headers:** `Authorization: Bearer <token>`
+**Response (200):**
+```json
+{
+    "participants": [
+        {
+            "id": 123,
+            "name": "GPT-4",
+            "type": "llm",
+            "metadata": {
+                "model": "gpt-4",
+                "temperature": 0.7,
+                "expertise": "general"
+            },
+            "created_at": "2024-03-21T12:00:00Z"
+        },
+        {
+            "id": 124,
+            "name": "Code Assistant",
+            "type": "llm",
+            "metadata": {
+                "model": "gpt-4",
+                "temperature": 0.3,
+                "expertise": "programming"
+            },
+            "created_at": "2024-03-21T12:00:00Z"
+        }
     ]
 }
 ```
@@ -202,3 +320,7 @@ Error Response Format:
 - Forked conversations inherit messages but start as private
 - Read access allows viewing and forking
 - Write access allows contributing to the conversation
+- Use SSE for real-time updates on conversation changes
+- Specify desired_participant_id to choose which LLM should respond
+- LLM responses are asynchronous and progress is reported via SSE
+- Multiple LLM participants can be available with different specialties
