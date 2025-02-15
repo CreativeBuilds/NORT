@@ -4,175 +4,188 @@ The Chat API server runs on http://localhost:3000
 
 ## API Endpoints
 
-### 1. Register/Login User
-**POST** `http://localhost:3000/auth`  
-**Body:**
-```json
-{
-    "username": "test-user-1",
-    "password": "your-password"
-}
-```
-**Response (New User - 201):**
-```json
-{
-    "tempKey": "550e8400-e29b-41d4-a716-446655440001",
-    "expiresIn": 86400000
-}
-```
-**Response (Existing User - 200):**
-```json
-{
-    "tempKey": "550e8400-e29b-41d4-a716-446655440001",
-    "expiresIn": 86400000
-}
-```
-**Curl Example:**
-```bash
-curl -X POST http://localhost:3000/auth \
-  -H "Content-Type: application/json" \
-  -d '{"username": "test-user-1", "password": "your-password"}'
-```
+### Authentication
 
-### 2. Create New Chat
-**POST** `http://localhost:3000/chats`  
-Requires authentication via x-auth-token header.
-
-**Body:**
+#### 1. Sign Up
+**POST** `/signup`
 ```json
 {
-    "participants": ["other-user-1", "other-user-2"]  // Optional
+    "username": "john_doe",
+    "password": "password123" // Must be at least 8 characters
 }
 ```
 **Response (201):**
 ```json
 {
-    "id": "550e8400-e29b-41d4-a716-446655440000",
-    "messages": [],
-    "participants": ["test-user-1", "other-user-1", "other-user-2"],
-    "createdAt": 1616516481089,
-    "updatedAt": 1616516481089
+    "id": 1,
+    "username": "john_doe",
+    "created_at": "2024-03-21T12:00:00Z"
 }
 ```
-**Curl Example:**
-```bash
-curl -X POST http://localhost:3000/chats \
-  -H "Content-Type: application/json" \
-  -H "x-auth-token: your-auth-token" \
-  -d '{"participants": ["other-user-1", "other-user-2"]}'
-```
 
-### 3. Protected Routes
-All other routes require authentication using the temporary key received from the /auth endpoint.
-Include the temporary key in the `x-auth-token` header for all requests.
-
-Example protected route request:
-```bash
-curl -X GET http://localhost:3000/protected-route \
-  -H "Content-Type: application/json" \
-  -H "x-auth-token: 550e8400-e29b-41d4-a716-446655440001"
-```
-
-### 4. Send Message
-**POST** `http://localhost:3000/chats/:chatId?/messages`  
-Note: If chatId is not provided, a new chat will be created automatically.
-
-**Body:**
+#### 2. Login
+**POST** `/login`
 ```json
 {
-    "userId": "test-user-1",
+    "username": "john_doe",
+    "password": "password123"
+}
+```
+**Response (200):**
+```json
+{
+    "user": {
+        "id": 1,
+        "username": "john_doe",
+        "created_at": "2024-03-21T12:00:00Z"
+    },
+    "token": "your-bearer-token",
+    "expires_at": "2024-03-28T12:00:00Z"
+}
+```
+
+### Conversations
+
+#### 1. List Conversations
+**GET** `/conversations`  
+**Headers:** `Authorization: Bearer <token>`
+```json
+{
+    "conversations": [
+        {
+            "id": 1,
+            "title": "My Chat",
+            "created_by_user_id": 1,
+            "visibility": "private",
+            "created_at": "2024-03-21T12:00:00Z",
+            "message_count": 5,
+            "first_message": "Hello, AI!"
+        }
+    ]
+}
+```
+
+#### 2. Start New Conversation
+**POST** `/chat`  
+**Headers:** `Authorization: Bearer <token>`
+```json
+{
     "content": "Hello, AI!"
 }
 ```
-**Response:**
+**Response (201):**
 ```json
 {
-    "userMessage": {
-        "id": "550e8400-e29b-41d4-a716-446655440001",
-        "content": "Hello, AI!",
-        "senderId": "test-user-1",
-        "timestamp": 1616516481090,
-        "role": "USER"
+    "conversation": {
+        "id": 1,
+        "created_by_user_id": 1,
+        "visibility": "private",
+        "created_at": "2024-03-21T12:00:00Z"
     },
-    "aiResponse": {
-        "id": "550e8400-e29b-41d4-a716-446655440002",
-        "content": "AI response message",
-        "senderId": "VI",
-        "timestamp": 1616516481091,
-        "role": "ASSISTANT"
-    }
-}
-```
-**Curl Examples:**
-```bash
-# Send message to new chat
-curl -X POST http://localhost:3000/chats/messages \
-  -H "Content-Type: application/json" \
-  -d '{"userId": "test-user-1", "content": "Hello, AI!"}'
-
-# Send message to existing chat
-curl -X POST http://localhost:3000/chats/550e8400-e29b-41d4-a716-446655440000/messages \
-  -H "Content-Type: application/json" \
-  -d '{"userId": "test-user-1", "content": "Hello again!"}'
-```
-
-### 5. Get Chat History
-**GET** `http://localhost:3000/chats/:chatId?userId=test-user-1`  
-**Response:**
-```json
-{
-    "id": "550e8400-e29b-41d4-a716-446655440000",
     "messages": [
         {
-            "id": "550e8400-e29b-41d4-a716-446655440001",
+            "id": 1,
+            "conversation_id": 1,
+            "participant_id": 1,
             "content": "Hello, AI!",
-            "senderId": "test-user-1",
-            "timestamp": 1616516481090,
-            "role": "USER"
-        },
-        {
-            "id": "550e8400-e29b-41d4-a716-446655440002",
-            "content": "AI response message",
-            "senderId": "VI",
-            "timestamp": 1616516481091,
-            "role": "ASSISTANT"
+            "participant_name": "john_doe",
+            "participant_type": "user",
+            "created_at": "2024-03-21T12:00:00Z"
         }
-    ],
-    "participants": ["test-user-1"],
-    "createdAt": 1616516481089,
-    "updatedAt": 1616516481091
+    ]
 }
 ```
-**Curl Example:**
-```bash
-curl "http://localhost:3000/chats/550e8400-e29b-41d4-a716-446655440000?userId=test-user-1"
+
+#### 3. Send Message to Conversation
+**POST** `/chat/:id`  
+**Headers:** `Authorization: Bearer <token>`
+```json
+{
+    "content": "Tell me more!",
+    "parent_id": 1  // Optional, for threaded replies
+}
+```
+**Response (200):**
+```json
+{
+    "conversation": {
+        "id": 1,
+        "created_by_user_id": 1,
+        "visibility": "private",
+        "created_at": "2024-03-21T12:00:00Z"
+    },
+    "messages": [
+        // All messages in conversation, ordered by creation time
+    ]
+}
 ```
 
-### 6. Get User's Chats
-**GET** `http://localhost:3000/users/:userId/chats`  
-**Response:**
+### Sharing & Collaboration
+
+#### 1. Create Share Link
+**POST** `/chat/:id/share`  
+**Headers:** `Authorization: Bearer <token>`
 ```json
-[
-    {
-        "id": "550e8400-e29b-41d4-a716-446655440000",
-        "messages": [...],
-        "participants": ["test-user-1"],
-        "createdAt": 1616516481089,
-        "updatedAt": 1616516481091
-    }
-]
+{
+    "access_type": "read"  // "read" or "write"
+}
 ```
-**Curl Example:**
-```bash
-curl http://localhost:3000/users/test-user-1/chats
+**Response (200):**
+```json
+{
+    "share_token": "unique-share-token"
+}
+```
+
+#### 2. Access Shared Conversation
+**GET** `/chat/shared/:token`  
+**Headers:** `Authorization: Bearer <token>`
+**Response (200):**
+```json
+{
+    "conversation": {
+        "id": 1,
+        "title": "Shared Chat",
+        "created_by_user_id": 1,
+        "visibility": "shared",
+        "created_at": "2024-03-21T12:00:00Z"
+    },
+    "access": {
+        "access_type": "read",
+        "share_token": "unique-share-token"
+    }
+}
+```
+
+#### 3. Fork Conversation
+**POST** `/chat/:id/fork`  
+**Headers:** `Authorization: Bearer <token>`
+```json
+{
+    "title": "My Fork"  // Optional
+}
+```
+**Response (201):**
+```json
+{
+    "conversation": {
+        "id": 2,
+        "title": "My Fork",
+        "created_by_user_id": 1,
+        "visibility": "private",
+        "forked_from_id": 1,
+        "created_at": "2024-03-21T12:00:00Z"
+    }
+}
 ```
 
 ## Error Responses
 All endpoints return appropriate HTTP status codes:
 - `400` Bad Request - Missing or invalid parameters
 - `401` Unauthorized - Invalid or missing authentication
-- `404` Not Found - Chat or user not found
-- `500` Internal Server Error - Server-side errors
+- `403` Forbidden - Insufficient permissions
+- `404` Not Found - Resource not found
+- `500` Internal Server Error
 
 Error Response Format:
 ```json
@@ -182,9 +195,10 @@ Error Response Format:
 ```
 
 ## Notes
-- All requests that include a body should have the `Content-Type: application/json` header
-- The server stores all data in the `.users` directory
-- Each user has their own directory containing their account data and chats
-- Each chat is stored in a separate directory under the user's chats folder
-- Authentication tokens expire after 24 hours
-- The PASSWORD_SALT environment variable should be set for production use
+- All requests must include `Content-Type: application/json` header
+- Protected routes require `Authorization: Bearer <token>` header
+- Bearer tokens expire after 7 days
+- Conversations are private by default
+- Forked conversations inherit messages but start as private
+- Read access allows viewing and forking
+- Write access allows contributing to the conversation
