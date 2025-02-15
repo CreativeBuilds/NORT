@@ -1,12 +1,14 @@
 {
   "dependencies": {
     "@types/bcrypt": "^5.0.2",
+    "@types/better-sqlite3": "^7.6.12",
     "@types/dotenv": "^6.1.1",
     "@types/express": "^5.0.0",
     "@types/morgan": "^1.9.9",
     "@types/node": "^22.13.4",
     "@types/uuid": "^10.0.0",
     "bcrypt": "^5.1.1",
+    "better-sqlite3": "^11.8.1",
     "chalk": "^5.4.1",
     "dotenv": "^16.4.7",
     "express": "^4.21.2",
