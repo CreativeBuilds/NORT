@@ -1,111 +1,229 @@
-import { ChatAPI } from './classes/api'
-import dotenv from 'dotenv'
-import morgan from 'morgan'
-import chalk from 'chalk'
+import express, { Request, Response, NextFunction, RequestHandler } from 'express'
+import { json } from 'body-parser'
+import bcrypt from 'bcrypt'
+import { v4 as uuidv4 } from 'uuid'
+import fs from 'fs/promises'
+import path from 'path'
 
-// Load environment variables
-dotenv.config()
-
-// Custom logging utility
-const log = {
-    info: (message: string) => console.log(chalk.blue(`[INFO] ${message}`)),
-    success: (message: string) => console.log(chalk.green(`[SUCCESS] ${message}`)),
-    warn: (message: string) => console.log(chalk.yellow(`[WARN] ${message}`)),
-    error: (message: string) => console.log(chalk.red(`[ERROR] ${message}`)),
-    debug: (message: string) => process.env.NODE_ENV === 'development' && console.log(chalk.gray(`[DEBUG] ${message}`))
+interface CustomRequest extends Request {
+    userId?: string
+    tempKey?: string
 }
 
-// Validate required environment variables
-const requiredEnvVars = ['OPENROUTER_API_KEY']
-const missingEnvVars = requiredEnvVars.filter(envVar => !process.env[envVar])
-
-if (missingEnvVars.length > 0) {
-    log.error(`Missing required environment variables: ${missingEnvVars.join(', ')}`)
-    process.exit(1)
+interface User {
+    username: string
+    passwordHash: string
+    tempKey?: string
+    tempKeyExpiry?: number
 }
 
-const PORT = process.env.PORT ? parseInt(process.env.PORT) : 3000
-const isDev = process.env.NODE_ENV === 'development'
+interface ChatMessage {
+    id: string
+    content: string
+    senderId: string
+    timestamp: number
+    role: 'USER' | 'ASSISTANT'
+}
 
-// Create and start the API server
-const api = new ChatAPI()
+interface Chat {
+    id: string
+    messages: ChatMessage[]
+    participants: string[]
+    createdAt: number
+    updatedAt: number
+}
 
-// Add verbose request logging
-api.app.use(morgan((tokens, req, res) => {
-    const status = parseInt(tokens.status(req, res) || '0')
-    const statusColor = status >= 500 ? chalk.red(status)
-        : status >= 400 ? chalk.yellow(status)
-        : status >= 300 ? chalk.cyan(status)
-        : status >= 200 ? chalk.green(status)
-        : chalk.gray(status)
+const app = express()
+const router = express.Router()
+const port = process.env.PORT || 3000
+const TEMP_KEY_EXPIRY = 24 * 60 * 60 * 1000 // 24 hours
+const SALT = process.env.PASSWORD_SALT || '10' // Fallback to 10 if not set
 
-    return [
-        chalk.gray(tokens.date(req, res)),
-        chalk.magenta(tokens.method(req, res)),
-        chalk.cyan(tokens['url'](req, res)),
-        statusColor,
-        chalk.yellow(tokens['response-time'](req, res) + 'ms'),
-        chalk.gray('- ' + tokens['user-agent'](req, res))
-    ].join(' ')
-}))
+if (!process.env.PASSWORD_SALT) {
+    console.warn('WARNING: PASSWORD_SALT not set in environment variables. Using default value.')
+}
 
-// Add request body logging in development
-if (isDev) {
-    api.app.use((req, res, next) => {
-        if (req.body && Object.keys(req.body).length > 0) {
-            log.debug(`Request Body: ${JSON.stringify(req.body, null, 2)}`)
+app.use(json())
+
+// Auth middleware
+const authMiddleware: RequestHandler = async (req: CustomRequest, res, next) => {
+    const tempKey = req.headers['x-auth-token']
+    if (!tempKey || Array.isArray(tempKey)) {
+        res.status(401).json({ error: 'Invalid or missing x-auth-token header' })
+        return
+    }
+
+    const [user, err] = await getUserByTempKey(tempKey)
+    if (err || !user) {
+        res.status(401).json({ error: 'Invalid or expired authentication token' })
+        return
+    }
+
+    req.userId = user.username
+    req.tempKey = tempKey
+    next()
+}
+
+async function getUserByTempKey(tempKey: string): Promise<[User | null, Error | null]> {
+    try {
+        const users = await fs.readdir('.users')
+        for (const username of users) {
+            const [user, err] = await readUserFile(username)
+            if (err) continue
+            if (user?.tempKey === tempKey && user.tempKeyExpiry && user.tempKeyExpiry > Date.now()) {
+                return [user, null]
+            }
         }
-        next()
-    })
+        return [null, new Error('User not found or key expired')]
+    } catch (err) {
+        return [null, err as Error]
+    }
 }
 
-// Handle graceful shutdown
-process.on('SIGTERM', () => {
-    log.info('SIGTERM received. Shutting down gracefully...')
-    process.exit(0)
+async function readUserFile(username: string): Promise<[User | null, Error | null]> {
+    try {
+        const userPath = path.join('.users', username, 'account.json')
+        const data = await fs.readFile(userPath, 'utf-8')
+        return [JSON.parse(data), null]
+    } catch (err) {
+        return [null, err as Error]
+    }
+}
+
+async function writeUserFile(username: string, userData: User): Promise<[boolean, Error | null]> {
+    try {
+        const userDir = path.join('.users', username)
+        const userPath = path.join(userDir, 'account.json')
+        
+        try {
+            await fs.access('.users')
+        } catch {
+            await fs.mkdir('.users')
+        }
+        
+        try {
+            await fs.access(userDir)
+        } catch {
+            await fs.mkdir(userDir)
+        }
+
+        await fs.writeFile(userPath, JSON.stringify(userData, null, 2))
+        return [true, null]
+    } catch (err) {
+        return [false, err as Error]
+    }
+}
+
+// Routes that don't need authentication
+router.post('/auth', async (req: CustomRequest, res) => {
+    const { username, password } = req.body
+    if (!username || !password) {
+        res.status(400).json({ error: 'Missing username or password in request body' })
+        return
+    }
+
+    try {
+        const userDir = path.join('.users', username)
+        const exists = await fs.access(userDir).then(() => true).catch(() => false)
+
+        if (exists) {
+            // Login flow
+            const [user, err] = await readUserFile(username)
+            if (err || !user) {
+                res.status(500).json({ error: 'Failed to read user data' })
+                return
+            }
+
+            const passwordMatch = await bcrypt.compare(password, user.passwordHash)
+            if (!passwordMatch) {
+                res.status(401).json({ error: 'Invalid credentials' })
+                return
+            }
+
+            // Generate new temp key
+            const tempKey = uuidv4()
+            user.tempKey = tempKey
+            user.tempKeyExpiry = Date.now() + TEMP_KEY_EXPIRY
+
+            const [saved, saveErr] = await writeUserFile(username, user)
+            if (!saved || saveErr) {
+                res.status(500).json({ error: 'Failed to update user data' })
+                return
+            }
+
+            res.json({ tempKey, expiresIn: TEMP_KEY_EXPIRY })
+            return
+        }
+
+        // Registration flow
+        const passwordHash = await bcrypt.hash(password, parseInt(SALT))
+        const tempKey = uuidv4()
+        const userData: User = {
+            username,
+            passwordHash,
+            tempKey,
+            tempKeyExpiry: Date.now() + TEMP_KEY_EXPIRY
+        }
+
+        const [saved, saveErr] = await writeUserFile(username, userData)
+        if (!saved || saveErr) {
+            res.status(500).json({ error: 'Failed to create user' })
+            return
+        }
+
+        res.status(201).json({ tempKey, expiresIn: TEMP_KEY_EXPIRY })
+    } catch (err) {
+        res.status(500).json({ error: 'Internal server error' })
+    }
 })
 
-process.on('SIGINT', () => {
-    log.info('SIGINT received. Shutting down gracefully...')
-    process.exit(0)
+// Protected routes
+router.use(authMiddleware)
+
+router.post('/chats', async (req: CustomRequest, res) => {
+    const { participants } = req.body
+    if (!req.userId) {
+        res.status(401).json({ error: 'User not authenticated' })
+        return
+    }
+
+    try {
+        const chatId = uuidv4()
+        const chat: Chat = {
+            id: chatId,
+            messages: [],
+            participants: [...new Set([req.userId, ...(participants || [])])],
+            createdAt: Date.now(),
+            updatedAt: Date.now()
+        }
+
+        const userDir = path.join('.users', req.userId)
+        const chatDir = path.join(userDir, 'chats', chatId)
+        
+        try {
+            await fs.access(path.join(userDir, 'chats'))
+        } catch {
+            await fs.mkdir(path.join(userDir, 'chats'))
+        }
+
+        try {
+            await fs.access(chatDir)
+        } catch {
+            await fs.mkdir(chatDir)
+        }
+
+        await fs.writeFile(
+            path.join(chatDir, 'chat.json'),
+            JSON.stringify(chat, null, 2)
+        )
+
+        res.status(201).json(chat)
+    } catch (err) {
+        res.status(500).json({ error: 'Failed to create chat' })
+    }
 })
 
-// Error handling
-process.on('uncaughtException', (error) => {
-    log.error(`Uncaught Exception: ${error.message}`)
-    log.debug(error.stack || 'No stack trace available')
-    process.exit(1)
+app.use(router)
+app.listen(port, () => {
+    console.log(`Server running on port ${port}`)
 })
-
-process.on('unhandledRejection', (reason, promise) => {
-    log.error(`Unhandled Rejection at: ${promise}`)
-    log.debug(`Reason: ${reason}`)
-})
-
-// Start the server
-try {
-    api.start(PORT)
-    log.success(`
-🚀 Chat API Server is running!
-
-Server Information:
-------------------
-${chalk.cyan('Port:')} ${PORT}
-${chalk.cyan('Environment:')} ${process.env.NODE_ENV || 'development'}
-${chalk.cyan('Base URL:')} http://localhost:${PORT}
-${chalk.cyan('Logging:')} ${isDev ? 'Verbose (Development)' : 'Basic (Production)'}
-
-Available Endpoints:
-------------------
-${chalk.green('POST')}   /auth                      - Authenticate user
-${chalk.green('POST')}   /chats/:chatId?/messages   - Send message (creates new chat if no chatId)
-${chalk.green('GET')}    /chats/:chatId            - Get chat history
-${chalk.green('GET')}    /users/:userId/chats      - Get user's chats
-
-${chalk.gray('For detailed API documentation, see example.md')}
-`)
-} catch (error) {
-    log.error('Failed to start server:')
-    log.debug(error instanceof Error ? error.stack || error.message : String(error))
-    process.exit(1)
-} 
