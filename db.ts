@@ -1,19 +1,19 @@
-import Database from 'better-sqlite3';
+import { Database } from 'bun:sqlite';
 import { join } from 'path';
 import { existsSync, mkdirSync } from 'fs';
 import crypto from 'crypto';
 
 // Ensure data directory exists
-const DATA_DIR = join(__dirname, 'data');
+const DATA_DIR = join(import.meta.dir, 'data');
 if (!existsSync(DATA_DIR)) mkdirSync(DATA_DIR);
 
 const db = new Database(join(DATA_DIR, 'nschat.db'));
 
 // Enable foreign keys
-db.pragma('foreign_keys = ON');
+db.run('PRAGMA foreign_keys = ON');
 
 // Create users table if it doesn't exist
-db.exec(`
+db.run(`
   CREATE TABLE IF NOT EXISTS users (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     username TEXT UNIQUE NOT NULL,
@@ -23,7 +23,7 @@ db.exec(`
 `);
 
 // Create auth_tokens table if it doesn't exist
-db.exec(`
+db.run(`
   CREATE TABLE IF NOT EXISTS auth_tokens (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id INTEGER NOT NULL,
@@ -35,7 +35,7 @@ db.exec(`
 `);
 
 // Create participants table to track both users and LLMs
-db.exec(`
+db.run(`
   CREATE TABLE IF NOT EXISTS participants (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL,
@@ -48,7 +48,7 @@ db.exec(`
 `);
 
 // Create conversations table (replaces chats)
-db.exec(`
+db.run(`
   CREATE TABLE IF NOT EXISTS conversations (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     title TEXT,
@@ -61,7 +61,7 @@ db.exec(`
 `);
 
 // Create messages table with tree structure support
-db.exec(`
+db.run(`
   CREATE TABLE IF NOT EXISTS messages (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     conversation_id INTEGER NOT NULL,
@@ -77,7 +77,7 @@ db.exec(`
 `);
 
 // Create conversation_access table for managing shared access
-db.exec(`
+db.run(`
   CREATE TABLE IF NOT EXISTS conversation_access (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     conversation_id INTEGER NOT NULL,
@@ -160,8 +160,8 @@ export function createUser(username: string, passwordHash: string): [User | null
 export function getUserByUsername(username: string): [User | null, Error | null] {
   try {
     const stmt = db.prepare('SELECT * FROM users WHERE username = ?');
-    const user = stmt.get(username) as User | undefined;
-    return [user || null, null];
+    const user = stmt.get(username) as User | null;
+    return [user, null];
   } catch (error) {
     return [null, error as Error];
   }
@@ -185,8 +185,8 @@ export function getValidTokenByValue(token: string): [AuthToken | null, Error | 
       AND expires_at > datetime('now')
       LIMIT 1
     `);
-    const authToken = stmt.get(token) as AuthToken | undefined;
-    return [authToken || null, null];
+    const authToken = stmt.get(token) as AuthToken | null;
+    return [authToken, null];
   } catch (error) {
     return [null, error as Error];
   }
@@ -201,8 +201,8 @@ export function getUserByToken(token: string): [User | null, Error | null] {
       AND t.expires_at > datetime('now')
       LIMIT 1
     `);
-    const user = stmt.get(token) as User | undefined;
-    return [user || null, null];
+    const user = stmt.get(token) as User | null;
+    return [user, null];
   } catch (error) {
     return [null, error as Error];
   }
@@ -210,8 +210,7 @@ export function getUserByToken(token: string): [User | null, Error | null] {
 
 export function deleteExpiredTokens(): [number, Error | null] {
   try {
-    const stmt = db.prepare("DELETE FROM auth_tokens WHERE expires_at <= datetime('now')");
-    const result = stmt.run();
+    const result = db.run("DELETE FROM auth_tokens WHERE expires_at <= datetime('now')");
     return [result.changes, null];
   } catch (error) {
     return [0, error as Error];
@@ -231,8 +230,8 @@ export function createParticipant(name: string, type: ParticipantType, userId?: 
 export function getParticipantByUserId(userId: number): [Participant | null, Error | null] {
   try {
     const stmt = db.prepare('SELECT * FROM participants WHERE user_id = ? AND type = "user" LIMIT 1');
-    const participant = stmt.get(userId) as Participant | undefined;
-    return [participant || null, null];
+    const participant = stmt.get(userId) as Participant | null;
+    return [participant, null];
   } catch (error) {
     return [null, error as Error];
   }
@@ -251,8 +250,8 @@ export function createConversation(userId: number, title?: string): [Conversatio
 export function getConversation(id: number): [Conversation | null, Error | null] {
   try {
     const stmt = db.prepare('SELECT * FROM conversations WHERE id = ?');
-    const conversation = stmt.get(id) as Conversation | undefined;
-    return [conversation || null, null];
+    const conversation = stmt.get(id) as Conversation | null;
+    return [conversation, null];
   } catch (error) {
     return [null, error as Error];
   }
@@ -302,8 +301,8 @@ export function getConversationMessages(conversationId: number): [Message[] | nu
     // Parse metadata JSON strings
     return [messages.map(msg => ({
       ...msg,
-      participant_metadata: msg.participant_metadata ? JSON.parse(msg.participant_metadata as unknown as string) : undefined,
-      metadata: msg.metadata ? JSON.parse(msg.metadata as unknown as string) : undefined
+      participant_metadata: msg.participant_metadata ? JSON.parse(msg.participant_metadata as string) : undefined,
+      metadata: msg.metadata ? JSON.parse(msg.metadata as string) : undefined
     })), null];
   } catch (error) {
     return [null, error as Error];
@@ -367,7 +366,7 @@ export function getConversationByShareToken(shareToken: string): [{ conversation
       JOIN conversation_access a ON a.conversation_id = c.id
       WHERE a.share_token = ?
     `);
-    const result = stmt.get(shareToken) as (Conversation & { access_type: ConversationAccessType, access_id: number }) | undefined;
+    const result = stmt.get(shareToken) as (Conversation & { access_type: ConversationAccessType, access_id: number }) | null;
     
     if (!result) return [null, new Error('Invalid share token')];
     
@@ -438,7 +437,7 @@ export function canUserAccessConversation(conversationId: number, userId: number
       created_by_user_id: number;
       visibility: ConversationVisibility;
       access_type?: ConversationAccessType;
-    };
+    } | null;
 
     if (!result) return [null, new Error('Conversation not found')];
 
@@ -470,7 +469,7 @@ export function getLLMParticipants(): [Participant[] | null, Error | null] {
     // Parse metadata JSON strings
     return [participants.map(p => ({
       ...p,
-      metadata: p.metadata ? JSON.parse(p.metadata as unknown as string) : undefined
+      metadata: p.metadata ? JSON.parse(p.metadata as string) : undefined
     })), null];
   } catch (error) {
     return [null, error as Error];
@@ -480,13 +479,13 @@ export function getLLMParticipants(): [Participant[] | null, Error | null] {
 export function getParticipantById(id: number): [Participant | null, Error | null] {
   try {
     const stmt = db.prepare('SELECT * FROM participants WHERE id = ?');
-    const participant = stmt.get(id) as Participant | undefined;
+    const participant = stmt.get(id) as Participant | null;
     
     if (!participant) return [null, null];
     
     return [{
       ...participant,
-      metadata: participant.metadata ? JSON.parse(participant.metadata as unknown as string) : undefined
+      metadata: participant.metadata ? JSON.parse(participant.metadata as string) : undefined
     }, null];
   } catch (error) {
     return [null, error as Error];

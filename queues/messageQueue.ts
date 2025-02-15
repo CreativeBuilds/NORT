@@ -22,7 +22,10 @@ messageQueue.process('process-llm-response', async (job) => {
     // Send typing started event
     sendSSEEvent(conversationId, {
       type: 'typing_started',
-      data: { participant_id: participantId }
+      data: { 
+        participant_id: participantId,
+        participant_type: participant.type
+      }
     });
 
     // TODO: Implement actual LLM response generation
@@ -39,16 +42,26 @@ messageQueue.process('process-llm-response', async (job) => {
 
     if (messageError || !message) throw new Error('Failed to create response message');
 
-    // Send message added event
+    // Send message added event with full participant info
     sendSSEEvent(conversationId, {
       type: 'message_added',
-      data: { message }
+      data: { 
+        message: {
+          ...message,
+          participant_type: participant.type,
+          participant_name: participant.name,
+          participant_metadata: participant.metadata
+        }
+      }
     });
 
     // Send typing stopped event
     sendSSEEvent(conversationId, {
       type: 'typing_stopped',
-      data: { participant_id: participantId }
+      data: { 
+        participant_id: participantId,
+        participant_type: participant.type
+      }
     });
 
     return message;

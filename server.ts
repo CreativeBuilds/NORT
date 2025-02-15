@@ -1,5 +1,6 @@
 import express, { Request, Response, NextFunction } from 'express'
 import { hash, compare } from 'bcrypt'
+import { join } from 'path'
 import { 
 	createUser, 
 	getUserByUsername, 
@@ -23,7 +24,18 @@ import crypto from 'crypto'
 import messageQueue from './queues/messageQueue'
 
 const app = express()
+const apiRouter = express.Router()
+
+// Serve static files from client directory
+app.use(express.static(join(__dirname, 'client')))
+
+// Parse JSON bodies
 app.use(express.json())
+
+// Serve index.html for root path
+app.get('/', (req: Request, res: Response) => {
+	res.sendFile(join(__dirname, 'client', 'index.html'))
+})
 
 // Types
 interface AuthenticatedRequest extends Request {
@@ -55,11 +67,16 @@ export function sendSSEEvent(conversationId: number, event: { type: string, data
 	if (!conversationClients) return;
 
 	const eventData = `data: ${JSON.stringify(event)}\n\n`;
+	console.log('Sending SSE event:', eventData);
+	
 	conversationClients.forEach(client => {
 		try {
 			client.write(eventData);
+			client.flush?.(); // Ensure data is sent immediately if possible
 		} catch (err) {
 			console.error('Error sending SSE:', err);
+			// Remove failed client
+			conversationClients.delete(client);
 		}
 	});
 }
@@ -126,8 +143,8 @@ app.use((err: Error, req: Request, res: Response, next: NextFunction) => {
 	res.status(500).json({ error: err.message }); return
 })
 
-// Public routes
-app.post('/signup', async (req: Request, res: Response): Promise<void> => {
+// Public API routes
+apiRouter.post('/auth/signup', async (req: Request, res: Response): Promise<void> => {
 	const { username, password } = req.body
 	
 	if (!username?.trim()) { res.status(400).json({ error: 'Username is required' }); return }
@@ -150,7 +167,7 @@ app.post('/signup', async (req: Request, res: Response): Promise<void> => {
 	}
 })
 
-app.post('/login', async (req: Request, res: Response): Promise<void> => {
+apiRouter.post('/auth/login', async (req: Request, res: Response): Promise<void> => {
 	const { username, password } = req.body
 	
 	if (!username?.trim() || !password?.trim()) { 
@@ -182,20 +199,8 @@ app.post('/login', async (req: Request, res: Response): Promise<void> => {
 	}
 })
 
-// Protected routes
-app.get('/', authenticate, async (req: AuthenticatedRequest, res: Response): Promise<void> => {
-	try {
-		res.json({ 
-			message: 'Server is running',
-			user: req.user
-		}); return
-	} catch (err) {
-		res.status(500).json({ error: (err as Error).message }); return
-	}
-})
-
-// Chat endpoints
-app.get('/conversations', authenticate, ensureParticipant, async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+// Protected API routes
+apiRouter.get('/conversations', authenticate, ensureParticipant, async (req: AuthenticatedRequest, res: Response): Promise<void> => {
 	try {
 		const [conversations, error] = await getUserConversations(req.user!.id)
 		if (error) { res.status(500).json({ error: error.message }); return }
@@ -206,8 +211,7 @@ app.get('/conversations', authenticate, ensureParticipant, async (req: Authentic
 	}
 })
 
-// Get available LLM participants
-app.get('/participants/llm', authenticate, async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+apiRouter.get('/participants/llm', authenticate, async (req: AuthenticatedRequest, res: Response): Promise<void> => {
 	try {
 		const [participants, error] = await getLLMParticipants();
 		if (error) { res.status(500).json({ error: error.message }); return }
@@ -218,17 +222,75 @@ app.get('/participants/llm', authenticate, async (req: AuthenticatedRequest, res
 	}
 });
 
-// Subscribe to conversation events
-app.get('/chat/:id/events', authenticate, checkConversationAccess, async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+apiRouter.post('/participants/llm', authenticate, async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+	const { name, metadata } = req.body;
+	
+	if (!name?.trim()) { res.status(400).json({ error: 'Name is required' }); return }
+	if (!metadata?.system_prompt) { res.status(400).json({ error: 'System prompt is required' }); return }
+	if (typeof metadata.temperature !== 'number' || metadata.temperature < 0 || metadata.temperature > 2) {
+		res.status(400).json({ error: 'Temperature must be between 0 and 2' }); return
+	}
+
+	try {
+		const [participant, error] = await createParticipant(name, 'llm', undefined, metadata);
+		if (error || !participant) { res.status(500).json({ error: error?.message || 'Failed to create participant' }); return }
+
+		res.status(201).json({ participant }); return
+	} catch (err) {
+		res.status(500).json({ error: (err as Error).message }); return
+	}
+});
+
+// Chat endpoints
+apiRouter.get('/chat/:id', authenticate, checkConversationAccess, async (req: AuthenticatedRequest, res: Response): Promise<void> => {
 	const conversationId = parseInt(req.params.id);
 	
 	if (!req.conversationAccess?.canRead) { res.status(403).json({ error: 'Not authorized to access this conversation' }); return }
 
-	// Set up SSE connection
+	try {
+		// Get conversation
+		const [conversation, conversationError] = await getConversation(conversationId);
+		if (conversationError || !conversation) { res.status(404).json({ error: 'Conversation not found' }); return }
+
+		// Get messages
+		const [messages, messagesError] = await getConversationMessages(conversationId);
+		if (messagesError) { res.status(500).json({ error: 'Failed to fetch messages' }); return }
+
+		res.json({
+			conversation,
+			messages: messages || []
+		}); return
+	} catch (err) {
+		res.status(500).json({ error: (err as Error).message }); return
+	}
+});
+
+apiRouter.get('/chat/:id/events', async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+	const conversationId = parseInt(req.params.id);
+	const authToken = req.query.auth_token as string;
+	
+	if (!authToken) { res.status(401).json({ error: 'No auth token provided' }); return }
+
+	// Verify auth token
+	const [user, userError] = getUserByToken(authToken);
+	if (userError || !user) { res.status(401).json({ error: 'Invalid auth token' }); return }
+	req.user = user;
+
+	// Check conversation access
+	const [access, accessError] = await canUserAccessConversation(conversationId, user.id);
+	if (accessError || !access) { res.status(404).json({ error: 'Conversation not found' }); return }
+	if (!access.canRead) { res.status(403).json({ error: 'Not authorized to access this conversation' }); return }
+
+	// Set up SSE headers
 	res.setHeader('Content-Type', 'text/event-stream');
 	res.setHeader('Cache-Control', 'no-cache');
 	res.setHeader('Connection', 'keep-alive');
-	res.flushHeaders();
+	res.setHeader('Access-Control-Allow-Origin', '*');
+	res.setHeader('Access-Control-Allow-Credentials', 'true');
+	
+	// Send initial connection established event
+	res.write('event: connected\ndata: {}\n\n');
+	res.flush?.(); // Ensure headers and initial event are sent
 
 	// Add client to tracking
 	if (!clients.has(conversationId)) {
@@ -238,6 +300,7 @@ app.get('/chat/:id/events', authenticate, checkConversationAccess, async (req: A
 
 	// Handle client disconnect
 	req.on('close', () => {
+		console.log('Client disconnected from SSE');
 		const conversationClients = clients.get(conversationId);
 		if (conversationClients) {
 			conversationClients.delete(res);
@@ -248,8 +311,7 @@ app.get('/chat/:id/events', authenticate, checkConversationAccess, async (req: A
 	});
 });
 
-// Modify chat endpoints to use message queue
-app.post('/chat', authenticate, ensureParticipant, async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+apiRouter.post('/chat', authenticate, ensureParticipant, async (req: AuthenticatedRequest, res: Response): Promise<void> => {
 	const { content, desired_participant_id } = req.body
 	if (!content?.trim()) { res.status(400).json({ error: 'Message content is required' }); return }
 
@@ -270,10 +332,13 @@ app.post('/chat', authenticate, ensureParticipant, async (req: AuthenticatedRequ
 		const [messages, messagesError] = await getConversationMessages(conversation.id)
 		if (messagesError || !messages) { res.status(500).json({ error: 'Failed to fetch messages' }); return }
 
+		// Find the full message with participant info
+		const fullMessage = messages.find(m => m.id === message.id);
+
 		// Notify clients about new message
 		sendSSEEvent(conversation.id, {
 			type: 'message_added',
-			data: { message }
+			data: { message: fullMessage }
 		});
 
 		// If an LLM participant is requested, queue their response
@@ -294,7 +359,7 @@ app.post('/chat', authenticate, ensureParticipant, async (req: AuthenticatedRequ
 	}
 });
 
-app.post('/chat/:id', authenticate, ensureParticipant, async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+apiRouter.post('/chat/:id', authenticate, ensureParticipant, async (req: AuthenticatedRequest, res: Response): Promise<void> => {
 	const conversationId = parseInt(req.params.id)
 	const { content, parent_id, desired_participant_id } = req.body
 
@@ -315,14 +380,17 @@ app.post('/chat/:id', authenticate, ensureParticipant, async (req: Authenticated
 		)
 		if (messageError || !message) { res.status(500).json({ error: 'Failed to create message' }); return }
 
-		// Get all messages
+		// Get full message with participant info
 		const [messages, messagesError] = await getConversationMessages(conversationId)
 		if (messagesError || !messages) { res.status(500).json({ error: 'Failed to fetch messages' }); return }
+
+		// Find the full message with participant info
+		const fullMessage = messages.find(m => m.id === message.id);
 
 		// Notify clients about new message
 		sendSSEEvent(conversationId, {
 			type: 'message_added',
-			data: { message }
+			data: { message: fullMessage }
 		});
 
 		// If an LLM participant is requested, queue their response
@@ -344,7 +412,7 @@ app.post('/chat/:id', authenticate, ensureParticipant, async (req: Authenticated
 });
 
 // Sharing endpoints
-app.post('/chat/:id/share', authenticate, checkConversationAccess, async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+apiRouter.post('/chat/:id/share', authenticate, checkConversationAccess, async (req: AuthenticatedRequest, res: Response): Promise<void> => {
 	const conversationId = parseInt(req.params.id)
 	const { access_type } = req.body
 
@@ -363,7 +431,7 @@ app.post('/chat/:id/share', authenticate, checkConversationAccess, async (req: A
 	}
 })
 
-app.get('/chat/shared/:token', authenticate, async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+apiRouter.get('/chat/shared/:token', authenticate, async (req: AuthenticatedRequest, res: Response): Promise<void> => {
 	const { token } = req.params
 
 	try {
@@ -376,7 +444,7 @@ app.get('/chat/shared/:token', authenticate, async (req: AuthenticatedRequest, r
 	}
 })
 
-app.post('/chat/:id/fork', authenticate, checkConversationAccess, async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+apiRouter.post('/chat/:id/fork', authenticate, checkConversationAccess, async (req: AuthenticatedRequest, res: Response): Promise<void> => {
 	const conversationId = parseInt(req.params.id)
 	const { title } = req.body
 
@@ -392,12 +460,21 @@ app.post('/chat/:id/fork', authenticate, checkConversationAccess, async (req: Au
 	}
 })
 
+// Mount API router under /api/v1
+app.use('/api/v1', apiRouter)
+
 // 404 handler
 app.use((req: Request, res: Response): void => {
-	res.status(404).json({ error: 'Not found' }); return
+	// For API routes, return JSON error
+	if (req.path.startsWith('/api/')) {
+		res.status(404).json({ error: 'API endpoint not found' }); return
+	}
+	
+	// For other routes, serve index.html (client-side routing)
+	res.sendFile(join(__dirname, 'client', 'index.html'))
 })
 
-const PORT = process.env.PORT || 3000
+const PORT = process.env.PORT || 3001
 app.listen(PORT, () => {
 	console.log(`Server running on port ${PORT}`)
 })

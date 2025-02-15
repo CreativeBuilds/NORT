@@ -2,3 +2,5 @@ node_modules/
 .prompts/
 .users/
 .specstory
+*.lock
+*.db
