@@ -17,7 +17,7 @@ import { ensureParticipant } from '../middleware/participant'
 import { checkConversationAccess } from '../middleware/conversation'
 import { AuthenticatedRequest } from '../types/request'
 import { addClient, removeClient, sendSSEEvent } from '../utils/sse'
-import messageQueue from '../../queues/messageQueue'
+import messageQueue from '../queues/messageQueue'
 
 const router = Router()
 

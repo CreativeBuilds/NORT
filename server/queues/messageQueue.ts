@@ -1,6 +1,8 @@
 import Queue from 'bull';
-import { sendSSEEvent } from '../server/utils/sse';
-import { createMessage, getParticipantById } from '../db';
+import { sendSSEEvent } from '../utils/sse';
+import { createMessage, getParticipantById, getConversationMessages } from '../../db';
+import { ChatService } from '../services/chat.service';
+import { DatabaseMessage } from '../classes/chat';
 
 // Initialize queue
 const messageQueue = new Queue('message-processing', {
@@ -19,6 +21,13 @@ messageQueue.process('process-llm-response', async (job) => {
     const [participant, participantError] = await getParticipantById(participantId);
     if (participantError || !participant) throw new Error('Failed to get participant');
 
+    // Get conversation history
+    const [messages, messagesError] = await getConversationMessages(conversationId);
+    if (messagesError || !messages) throw new Error('Failed to fetch conversation history');
+
+    // Cast messages to DatabaseMessage type since they include participant info
+    const databaseMessages = messages as DatabaseMessage[];
+
     // Send typing started event
     sendSSEEvent(conversationId, {
       type: 'typing_started',
@@ -28,9 +37,13 @@ messageQueue.process('process-llm-response', async (job) => {
       }
     });
 
-    // TODO: Implement actual LLM response generation
-    // This is where you'd integrate with OpenAI or other LLM providers
-    const response = "Sample LLM response"; // Replace with actual LLM integration
+    // Generate LLM response
+    const [response, error] = await ChatService.generateResponse(
+      databaseMessages,
+      participant.metadata?.system_prompt
+    );
+    
+    if (error || !response) throw error || new Error('Failed to generate response');
 
     // Create response message
     const [message, messageError] = await createMessage(
