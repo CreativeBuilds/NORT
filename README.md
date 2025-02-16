@@ -23,7 +23,7 @@ git clone https://github.com/creativebuilds/NORT.git ./nort
 cd nort
 
 # Install dependencies
-npm install
+bun install
 
 # Set up your environment variables
 cp .env.example .env
@@ -45,13 +45,13 @@ API_KEY=your_ai_service_api_key
 
 ```bash
 # Start the development server
-npm run dev
+bun dev
 
 # Build for production
-npm run build
+bun run build
 
 # Start production server
-npm start
+bun start
 ```
 
 ## Architecture
