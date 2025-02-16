@@ -7,7 +7,7 @@ import crypto from 'crypto';
 const DATA_DIR = join(import.meta.dir, 'data');
 if (!existsSync(DATA_DIR)) mkdirSync(DATA_DIR);
 
-const db = new Database(join(DATA_DIR, 'nschat.db'));
+const db = new Database(join(DATA_DIR, 'nort.db'));
 
 // Enable foreign keys
 db.run('PRAGMA foreign_keys = ON');

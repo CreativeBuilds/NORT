@@ -1,5 +1,5 @@
 {
-  "name": "nschat",
+  "name": "nort",
   "version": "1.0.0",
   "description": "Chat server with LLM integration",
   "main": "server/index.ts",
