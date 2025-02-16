@@ -1,5 +1,5 @@
 import Queue from 'bull';
-import { sendSSEEvent } from '../server';
+import { sendSSEEvent } from '../server/utils/sse';
 import { createMessage, getParticipantById } from '../db';
 
 // Initialize queue

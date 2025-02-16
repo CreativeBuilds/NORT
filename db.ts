@@ -301,8 +301,8 @@ export function getConversationMessages(conversationId: number): [Message[] | nu
     // Parse metadata JSON strings
     return [messages.map(msg => ({
       ...msg,
-      participant_metadata: msg.participant_metadata ? JSON.parse(msg.participant_metadata as string) : undefined,
-      metadata: msg.metadata ? JSON.parse(msg.metadata as string) : undefined
+      participant_metadata: typeof msg.participant_metadata === 'string' ? JSON.parse(msg.participant_metadata) : msg.participant_metadata,
+      metadata: typeof msg.metadata === 'string' ? JSON.parse(msg.metadata) : msg.metadata
     })), null];
   } catch (error) {
     return [null, error as Error];
@@ -469,7 +469,7 @@ export function getLLMParticipants(): [Participant[] | null, Error | null] {
     // Parse metadata JSON strings
     return [participants.map(p => ({
       ...p,
-      metadata: p.metadata ? JSON.parse(p.metadata as string) : undefined
+      metadata: typeof p.metadata === 'string' ? JSON.parse(p.metadata) : p.metadata
     })), null];
   } catch (error) {
     return [null, error as Error];
@@ -485,7 +485,7 @@ export function getParticipantById(id: number): [Participant | null, Error | nul
     
     return [{
       ...participant,
-      metadata: participant.metadata ? JSON.parse(participant.metadata as string) : undefined
+      metadata: typeof participant.metadata === 'string' ? JSON.parse(participant.metadata) : participant.metadata
     }, null];
   } catch (error) {
     return [null, error as Error];

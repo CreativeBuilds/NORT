@@ -2,12 +2,12 @@
   "name": "nschat",
   "version": "1.0.0",
   "description": "Chat server with LLM integration",
-  "main": "server.ts",
+  "main": "server/index.ts",
   "type": "module",
   "scripts": {
-    "start": "bun run server.ts",
-    "dev": "bun --watch server.ts",
-    "build": "bun build server.ts --outdir dist"
+    "start": "bun run server/index.ts",
+    "dev": "bun --watch server/index.ts",
+    "build": "bun build server/index.ts --outdir dist"
   },
   "dependencies": {
     "bcrypt": "^5.1.1",

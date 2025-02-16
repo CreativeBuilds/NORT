@@ -30,7 +30,8 @@ export async function chat(prompt: string, user_settings = {}, should_stream = f
 
         const stream = await client.completions.create({ 
             ...settings, 
-            ...user_settings,
+            ...user_settings
+        }, {
             signal: controller.signal 
         });
 
@@ -60,8 +61,8 @@ export async function chat(prompt: string, user_settings = {}, should_stream = f
             role: 'ASSISTANT'
         }, null];
 
-    } catch (err) {
-        if (err.name === 'AbortError') {
+    } catch (err: unknown) {
+        if (err && typeof err === 'object' && 'name' in err && err.name === 'AbortError') {
             return [null, "Request timed out after 30 seconds"];
         }
         const error = err instanceof Error ? err.message : "Unknown error occurred";
