@@ -14,15 +14,36 @@ db.run('PRAGMA foreign_keys = ON');
 
 // Migration: Add private column to participants table if it doesn't exist
 const tableInfo = db.prepare('PRAGMA table_info(participants)').all() as { name: string }[];
+
+// Check for each column and add if missing
 const hasPrivateColumn = tableInfo.some(column => column.name === 'private');
+const hasDescriptionColumn = tableInfo.some(column => column.name === 'description');
+const hasIsDefaultColumn = tableInfo.some(column => column.name === 'is_default');
 
 if (!hasPrivateColumn) {
   try {
     db.run('ALTER TABLE participants ADD COLUMN private BOOLEAN DEFAULT 1');
     console.log('Added private column to participants table');
   } catch (error) {
-    // Column might already exist, which is fine
     console.log('Private column already exists or could not be added:', error);
+  }
+}
+
+if (!hasDescriptionColumn) {
+  try {
+    db.run('ALTER TABLE participants ADD COLUMN description TEXT');
+    console.log('Added description column to participants table');
+  } catch (error) {
+    console.log('Description column already exists or could not be added:', error);
+  }
+}
+
+if (!hasIsDefaultColumn) {
+  try {
+    db.run('ALTER TABLE participants ADD COLUMN is_default BOOLEAN DEFAULT 0');
+    console.log('Added is_default column to participants table');
+  } catch (error) {
+    console.log('is_default column already exists or could not be added:', error);
   }
 }
 
@@ -57,6 +78,8 @@ db.run(`
     user_id INTEGER,
     metadata JSON,
     private BOOLEAN DEFAULT 1,
+    description TEXT,
+    is_default BOOLEAN DEFAULT 0,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
   )
@@ -127,6 +150,8 @@ type Participant = {
   user_id?: number;
   metadata?: Record<string, any>;
   private: boolean;
+  description?: string;
+  is_default: boolean;
   created_at: string;
 }
 
@@ -238,11 +263,39 @@ export function createParticipant(
   type: ParticipantType, 
   userId?: number, 
   metadata?: Record<string, any>,
-  isPrivate: boolean = true
+  isPrivate: boolean = true,
+  description?: string,
+  isDefault: boolean = false
 ): [Participant | null, Error | null] {
   try {
-    const stmt = db.prepare('INSERT INTO participants (name, type, user_id, metadata, private) VALUES (?, ?, ?, ?, ?) RETURNING *');
-    const participant = stmt.get(name, type, userId || null, metadata ? JSON.stringify(metadata) : null, isPrivate ? 1 : 0) as Participant;
+    // If this is a default user persona, unset any existing defaults for this user
+    if (isDefault && type === 'user' && userId) {
+      db.prepare('UPDATE participants SET is_default = 0 WHERE user_id = ? AND type = "user"').run(userId);
+    }
+
+    const stmt = db.prepare(`
+      INSERT INTO participants (
+        name, 
+        type, 
+        user_id, 
+        metadata, 
+        private,
+        description,
+        is_default
+      ) VALUES (?, ?, ?, ?, ?, ?, ?) 
+      RETURNING *
+    `);
+
+    const participant = stmt.get(
+      name, 
+      type, 
+      userId || null, 
+      metadata ? JSON.stringify(metadata) : null, 
+      isPrivate ? 1 : 0,
+      description || null,
+      isDefault ? 1 : 0
+    ) as Participant;
+
     return [participant, null];
   } catch (error) {
     return [null, error as Error];
@@ -665,6 +718,97 @@ export function getConversationParticipants(conversationId: number, userId: numb
   } catch (error) {
     console.error('Error in getConversationParticipants:', error);
     return [null, error as Error];
+  }
+}
+
+// Add function to get user personas
+export function getUserPersonas(userId: number): [Participant[] | null, Error | null] {
+  try {
+    const stmt = db.prepare(`
+      SELECT 
+        id,
+        name,
+        type,
+        user_id,
+        metadata,
+        COALESCE(private, 1) as private,
+        description,
+        is_default,
+        created_at
+      FROM participants 
+      WHERE user_id = ? AND type = "user"
+      ORDER BY is_default DESC, name ASC
+    `);
+    
+    const participants = stmt.all(userId) as Participant[];
+    
+    return [participants.map(p => ({
+      ...p,
+      metadata: typeof p.metadata === 'string' ? JSON.parse(p.metadata) : p.metadata,
+      private: Boolean(p.private),
+      is_default: Boolean(p.is_default)
+    })), null];
+  } catch (error) {
+    console.error('Error in getUserPersonas:', error);
+    return [null, error as Error];
+  }
+}
+
+// Add function to get current active persona
+export function getCurrentPersona(userId: number): [Participant | null, Error | null] {
+  try {
+    const stmt = db.prepare(`
+      SELECT 
+        id,
+        name,
+        type,
+        user_id,
+        metadata,
+        COALESCE(private, 1) as private,
+        description,
+        is_default,
+        created_at
+      FROM participants 
+      WHERE user_id = ? AND type = "user" AND is_default = 1
+      LIMIT 1
+    `);
+    
+    const participant = stmt.get(userId) as Participant | null;
+    
+    if (!participant) return [null, null];
+    
+    return [{
+      ...participant,
+      metadata: typeof participant.metadata === 'string' ? JSON.parse(participant.metadata) : participant.metadata,
+      private: Boolean(participant.private),
+      is_default: Boolean(participant.is_default)
+    }, null];
+  } catch (error) {
+    console.error('Error in getCurrentPersona:', error);
+    return [null, error as Error];
+  }
+}
+
+// Add function to set active persona
+export function setDefaultPersona(userId: number, personaId: number): [boolean, Error | null] {
+  try {
+    // First verify the persona belongs to the user
+    const verifyStmt = db.prepare('SELECT id FROM participants WHERE id = ? AND user_id = ? AND type = "user"');
+    const persona = verifyStmt.get(personaId, userId);
+    
+    if (!persona) return [false, new Error('Persona not found or not owned by user')];
+    
+    // Unset any existing defaults
+    db.prepare('UPDATE participants SET is_default = 0 WHERE user_id = ? AND type = "user"').run(userId);
+    
+    // Set the new default
+    const stmt = db.prepare('UPDATE participants SET is_default = 1 WHERE id = ?');
+    const result = stmt.run(personaId);
+    
+    return [result.changes > 0, null];
+  } catch (error) {
+    console.error('Error in setDefaultPersona:', error);
+    return [false, error as Error];
   }
 }
 

@@ -2,29 +2,50 @@ import { Router, Request, Response } from 'express'
 import { hash, compare } from 'bcrypt'
 import crypto from 'crypto'
 import { createUser, getUserByUsername, createAuthToken } from '../db'
+import { createParticipant } from '../db'
+import { AuthenticatedRequest } from '../types/request'
+import { v4 as uuidv4 } from 'uuid'
 
 const router = Router()
 
-router.post('/signup', async (req: Request, res: Response): Promise<void> => {
+router.post('/signup', async (req: AuthenticatedRequest, res: Response): Promise<void> => {
 	const { username, password } = req.body
 	
 	if (!username?.trim()) { res.status(400).json({ error: 'Username is required' }); return }
-	
-	if (!password?.trim() || password.length < 8) { 
-		res.status(400).json({ error: 'Password must be at least 8 characters long' }); return 
-	}
+	if (!password?.trim()) { res.status(400).json({ error: 'Password is required' }); return }
+	if (password.length < 8) { res.status(400).json({ error: 'Password must be at least 8 characters' }); return }
 
 	try {
+		// Hash password
 		const passwordHash = await hash(password, 10)
-		const [user, error] = createUser(username, passwordHash)
 		
-		if (error) { res.status(400).json({ error: error.message }); return }
+		// Create user
+		const [user, userError] = await createUser(username, passwordHash)
+		if (userError || !user) { res.status(500).json({ error: userError?.message || 'Failed to create user' }); return }
+
+		// Create default persona for the user
+		const [persona, personaError] = await createParticipant(
+			username, 
+			'user', 
+			user.id,
+			undefined, // no metadata needed
+			true, // private by default
+			`Default persona for ${username}`, // description
+			true // set as default
+		)
+		if (personaError) { res.status(500).json({ error: personaError.message }); return }
+
+		// Create auth token
+		const token = uuidv4()
+		const expiresAt = new Date()
+		expiresAt.setDate(expiresAt.getDate() + 7) // Token expires in 7 days
 		
-		// Remove password_hash from response
-		const { password_hash, ...safeUser } = user!
-		res.status(201).json(safeUser); return
+		const [authToken, tokenError] = await createAuthToken(user.id, token, expiresAt)
+		if (tokenError || !authToken) { res.status(500).json({ error: tokenError?.message || 'Failed to create auth token' }); return }
+
+		res.status(201).json({ token })
 	} catch (err) {
-		res.status(500).json({ error: (err as Error).message }); return
+		res.status(500).json({ error: (err as Error).message })
 	}
 })
 

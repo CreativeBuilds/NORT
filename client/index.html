@@ -300,6 +300,90 @@
         .manage-llm-btn {
             background: #5856D6;
         }
+
+        .header-left {
+            display: flex;
+            align-items: center;
+            gap: 20px;
+        }
+
+        #current-persona {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            font-size: 14px;
+            color: #666;
+        }
+
+        .persona-name {
+            font-weight: bold;
+        }
+
+        .manage-personas-btn {
+            background: #5856D6;
+            font-size: 12px;
+            padding: 5px 10px;
+        }
+
+        #personas-list {
+            margin-bottom: 20px;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+
+        .persona-item {
+            padding: 15px;
+            border: 1px solid #ccc;
+            border-radius: 8px;
+            background: #f9f9f9;
+        }
+
+        .persona-item.active {
+            border-color: #007AFF;
+            background: #f0f7ff;
+        }
+
+        .persona-item-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 10px;
+        }
+
+        .persona-item-name {
+            font-weight: bold;
+            font-size: 16px;
+        }
+
+        .persona-item-description {
+            color: #666;
+            font-size: 14px;
+            margin-bottom: 10px;
+        }
+
+        .persona-item-actions {
+            display: flex;
+            gap: 10px;
+        }
+
+        .set-default-btn {
+            background: #34C759;
+        }
+
+        .set-default-btn:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+
+        .add-persona-section {
+            border-top: 1px solid #ccc;
+            padding-top: 20px;
+        }
+
+        .add-persona-section h4 {
+            margin: 0 0 15px 0;
+        }
     </style>
 </head>
 <body>
@@ -320,7 +404,13 @@
 
     <div id="chat-container" style="display: none;">
         <div id="chat-header">
-            <h2>nort</h2>
+            <div class="header-left">
+                <h2>nort</h2>
+                <div id="current-persona">
+                    <span class="persona-name"></span>
+                    <button id="manage-personas-btn" class="manage-personas-btn">Manage Personas</button>
+                </div>
+            </div>
             <button id="logout-btn">Logout</button>
         </div>
         <div id="messages"></div>
@@ -333,6 +423,31 @@
             </div>
             <input type="text" id="message-input" placeholder="Type your message...">
             <button id="send-btn">Send</button>
+        </div>
+    </div>
+
+    <!-- Modal for managing user personas -->
+    <div id="manage-personas-modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>Manage Your Personas</h3>
+                <button class="close-modal">&times;</button>
+            </div>
+            <div id="personas-list">
+                <!-- Personas will be listed here -->
+            </div>
+            <div class="add-persona-section">
+                <h4>Create New Persona</h4>
+                <div class="form-group">
+                    <label for="persona-name">Name</label>
+                    <input type="text" id="persona-name" placeholder="e.g., Professional Me, Creative Me">
+                </div>
+                <div class="form-group">
+                    <label for="persona-description">Description</label>
+                    <textarea id="persona-description" placeholder="Describe this persona's personality and communication style..."></textarea>
+                </div>
+                <button id="create-persona-btn">Create Persona</button>
+            </div>
         </div>
     </div>
 

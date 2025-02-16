@@ -6,8 +6,11 @@ let currentParticipants = []; // Track current participants
 // Initialize the chat interface
 async function initializeChat() {
     try {
-        // Load all available personas first
-        await loadParticipants();
+        // Load current persona and available personas first
+        await Promise.all([
+            loadCurrentPersona(),
+            loadParticipants()
+        ]);
 
         // Then check for conversation ID in URL
         const pathParts = window.location.pathname.split('/');
@@ -397,6 +400,154 @@ async function toggleParticipantPrivacy(id, isPrivate) {
     }
 }
 
+// Load and display user personas
+async function loadUserPersonas() {
+    try {
+        const response = await fetch(`${window.API_BASE}/participants/user`, {
+            headers: {
+                'Authorization': `Bearer ${window.getAuthToken()}`
+            }
+        });
+
+        if (!response.ok) throw new Error('Failed to load personas');
+
+        const data = await response.json();
+        if (!data.personas) {
+            console.error('No personas data received:', data);
+            return [null, new Error('No personas data received')];
+        }
+
+        displayUserPersonas(data.personas);
+        return [data.personas, null];
+    } catch (error) {
+        console.error('Error loading personas:', error);
+        return [null, error];
+    }
+}
+
+// Load current active persona
+async function loadCurrentPersona() {
+    try {
+        const response = await fetch(`${window.API_BASE}/participants/user/current`, {
+            headers: {
+                'Authorization': `Bearer ${window.getAuthToken()}`
+            }
+        });
+
+        if (!response.ok) throw new Error('Failed to load current persona');
+
+        const data = await response.json();
+        if (!data.persona) {
+            console.error('No current persona data received:', data);
+            return [null, new Error('No current persona data received')];
+        }
+
+        // Update UI with current persona
+        const personaName = document.querySelector('#current-persona .persona-name');
+        if (personaName) {
+            personaName.textContent = data.persona.name;
+        }
+
+        return [data.persona, null];
+    } catch (error) {
+        console.error('Error loading current persona:', error);
+        return [null, error];
+    }
+}
+
+// Display user personas in the management modal
+function displayUserPersonas(personas) {
+    const personasList = document.getElementById('personas-list');
+    if (!personasList) {
+        console.error('Could not find personas-list element');
+        return;
+    }
+
+    personasList.innerHTML = '';
+    
+    personas.forEach(persona => {
+        if (!persona || !persona.id || !persona.name) {
+            console.error('Invalid persona data:', persona);
+            return;
+        }
+
+        const item = document.createElement('div');
+        item.className = `persona-item ${persona.is_default ? 'active' : ''}`;
+        item.innerHTML = `
+            <div class="persona-item-header">
+                <div class="persona-item-name">${persona.name}</div>
+                <div class="persona-item-actions">
+                    <button class="set-default-btn" onclick="handleSetDefaultPersona(${persona.id})" ${persona.is_default ? 'disabled' : ''}>
+                        ${persona.is_default ? 'Current' : 'Set as Current'}
+                    </button>
+                </div>
+            </div>
+            <div class="persona-item-description">${persona.description || ''}</div>
+        `;
+        personasList.appendChild(item);
+    });
+}
+
+// Create new user persona
+async function createUserPersona(name, description) {
+    try {
+        const response = await fetch(`${window.API_BASE}/participants/user`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${window.getAuthToken()}`
+            },
+            body: JSON.stringify({
+                name,
+                description
+            })
+        });
+
+        if (!response.ok) throw new Error('Failed to create persona');
+
+        const data = await response.json();
+        return [data.participant, null];
+    } catch (error) {
+        console.error('Error creating persona:', error);
+        return [null, error];
+    }
+}
+
+// Set default persona
+async function setDefaultPersona(id) {
+    try {
+        const response = await fetch(`${window.API_BASE}/participants/user/${id}/set-default`, {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${window.getAuthToken()}`
+            }
+        });
+
+        if (!response.ok) throw new Error('Failed to set default persona');
+
+        const data = await response.json();
+        return [data.success, null];
+    } catch (error) {
+        console.error('Error setting default persona:', error);
+        return [false, error];
+    }
+}
+
+// Handle setting default persona
+async function handleSetDefaultPersona(id) {
+    const [success, error] = await setDefaultPersona(id);
+    if (error) {
+        alert('Failed to update current persona');
+        return;
+    }
+    
+    // Reload personas to update UI
+    await Promise.all([
+        loadUserPersonas(),
+        loadCurrentPersona()
+    ]);
+}
+
 // Event Listeners
 document.addEventListener('DOMContentLoaded', () => {
     // Initialize chat interface
@@ -405,26 +556,67 @@ document.addEventListener('DOMContentLoaded', () => {
     // Handle create AI form submission
     const createLLMModal = document.getElementById('create-llm-modal');
     const manageLLMModal = document.getElementById('manage-llm-modal');
+    const managePersonasModal = document.getElementById('manage-personas-modal');
     const createLLMBtn = document.getElementById('create-llm-btn');
+    const createPersonaBtn = document.getElementById('create-persona-btn');
     const addLLMBtn = document.getElementById('add-llm-btn');
     const manageLLMBtn = document.createElement('button');
     manageLLMBtn.className = 'manage-llm-btn';
     manageLLMBtn.textContent = 'Manage';
     document.getElementById('llm-container').appendChild(manageLLMBtn);
+
+    // Manage personas button
+    document.getElementById('manage-personas-btn').addEventListener('click', async () => {
+        await loadUserPersonas();
+        managePersonasModal.classList.add('active');
+    });
+    
+    // Create persona button
+    createPersonaBtn.addEventListener('click', async () => {
+        const name = document.getElementById('persona-name').value.trim();
+        const description = document.getElementById('persona-description').value.trim();
+
+        if (!name || !description) {
+            alert('Please fill in all required fields');
+            return;
+        }
+
+        const [participant, error] = await createUserPersona(name, description);
+        if (error) {
+            alert('Failed to create persona');
+            return;
+        }
+
+        // Clear form
+        document.getElementById('persona-name').value = '';
+        document.getElementById('persona-description').value = '';
+
+        // Reload personas
+        await Promise.all([
+            loadUserPersonas(),
+            loadCurrentPersona()
+        ]);
+    });
     
     // Close modal buttons
     document.querySelectorAll('.close-modal').forEach(btn => {
         btn.addEventListener('click', async () => {
-            // Check if either modal is active before closing
-            const wasActive = createLLMModal.classList.contains('active') || manageLLMModal.classList.contains('active');
+            // Check if any modal is active before closing
+            const wasActive = createLLMModal.classList.contains('active') || 
+                            manageLLMModal.classList.contains('active') ||
+                            managePersonasModal.classList.contains('active');
             
-            // Close modals
+            // Close all modals
             createLLMModal.classList.remove('active');
             manageLLMModal.classList.remove('active');
+            managePersonasModal.classList.remove('active');
             
             // Only reload if a modal was active
             if (wasActive) {
-                await loadParticipants();
+                await Promise.all([
+                    loadParticipants(),
+                    loadCurrentPersona()
+                ]);
             }
         });
     });
@@ -489,3 +681,6 @@ async function handleTogglePrivacy(id, makePrivate) {
     alert('AI privacy settings updated successfully!');
     await loadParticipants(); // Reload after successful privacy update
 }
+
+// Export functions for global use
+window.handleSetDefaultPersona = handleSetDefaultPersona;

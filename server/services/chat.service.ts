@@ -35,6 +35,8 @@ export class ChatService {
 
                 // Handle both streaming and non-streaming responses
                 const text = 'choices' in response ? response.choices[0]?.text : '';
+
+                console.log('Generated Response:', '\n', text, '\n', '-'.repeat(80));
                 if (!text) return [null, new Error('No response generated')];
 
                 return [text.trim(), null];
