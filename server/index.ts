@@ -1,6 +1,6 @@
 import express, { Request, Response, NextFunction } from 'express'
 import { join } from 'path'
-import { deleteExpiredTokens } from '../db'
+import { deleteExpiredTokens } from './db'
 import authRouter from './routes/auth'
 import chatRouter from './routes/chat'
 import participantsRouter from './routes/participants'

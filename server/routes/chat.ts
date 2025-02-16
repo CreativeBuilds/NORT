@@ -11,7 +11,7 @@ import {
 	forkConversation,
 	getUserByToken,
 	canUserAccessConversation
-} from '../../db'
+} from '../db'
 import { authenticate } from '../middleware/auth'
 import { ensureParticipant } from '../middleware/participant'
 import { checkConversationAccess } from '../middleware/conversation'

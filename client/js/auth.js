@@ -35,7 +35,6 @@ async function checkAuthStatus() {
 
             if (response.ok) {
                 showChat();
-                loadLLMParticipants();
                 
                 // Check if we're on a specific chat page
                 const pathParts = window.location.pathname.split('/');
@@ -81,9 +80,6 @@ async function handleLogin() {
         localStorage.setItem('auth_token', data.token);
         
         showChat();
-        
-        // Load available LLM participants
-        loadLLMParticipants();
     } catch (error) {
         errorElement.textContent = error.message;
     }
@@ -153,37 +149,8 @@ function logout() {
 }
 
 async function loadLLMParticipants() {
-    try {
-        const response = await fetch(`${API_BASE}/participants/llm`, {
-            headers: {
-                'Authorization': `Bearer ${authToken}`
-            }
-        });
-
-        if (!response.ok) throw new Error('Failed to load LLM participants');
-
-        const data = await response.json();
-        const select = document.getElementById('llm-select');
-        
-        // Clear existing options
-        select.innerHTML = '';
-        
-        // Add default option
-        const defaultOption = document.createElement('option');
-        defaultOption.value = '';
-        defaultOption.textContent = 'Select an AI participant...';
-        select.appendChild(defaultOption);
-        
-        // Add LLM participants
-        data.participants.forEach(participant => {
-            const option = document.createElement('option');
-            option.value = participant.id;
-            option.textContent = participant.name;
-            select.appendChild(option);
-        });
-    } catch (error) {
-        console.error('Error loading LLM participants:', error);
-    }
+    // This function is now handled in chat.js
+    console.warn('loadLLMParticipants in auth.js is deprecated. Use the version in chat.js instead.');
 }
 
 function showCreateLLMModal() {
@@ -199,47 +166,8 @@ function hideCreateLLMModal() {
 }
 
 async function createLLMParticipant() {
-    const name = document.getElementById('llm-name').value.trim();
-    const systemPrompt = document.getElementById('llm-system-prompt').value.trim();
-    const temperature = parseFloat(document.getElementById('llm-temperature').value);
-
-    if (!name) { alert('Please enter a name for the AI participant'); return }
-    if (!systemPrompt) { alert('Please enter a system prompt'); return }
-    if (isNaN(temperature) || temperature < 0 || temperature > 2) { 
-        alert('Temperature must be between 0 and 2'); return 
-    }
-
-    try {
-        const response = await fetch(`${API_BASE}/participants/llm`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${authToken}`
-            },
-            body: JSON.stringify({
-                name,
-                metadata: {
-                    system_prompt: systemPrompt,
-                    temperature,
-                    model: 'gpt-4' // You might want to make this configurable
-                }
-            })
-        });
-
-        if (!response.ok) {
-            const data = await response.json();
-            throw new Error(data.error || 'Failed to create AI participant');
-        }
-
-        // Reload LLM participants list
-        await loadLLMParticipants();
-        
-        // Hide modal
-        hideCreateLLMModal();
-    } catch (error) {
-        alert(error.message);
-        console.error('Error creating LLM participant:', error);
-    }
+    // This function is now handled in chat.js
+    console.warn('createLLMParticipant in auth.js is deprecated. Use the version in chat.js instead.');
 }
 
 // Export for use in chat.js

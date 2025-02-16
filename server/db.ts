@@ -4,13 +4,27 @@ import { existsSync, mkdirSync } from 'fs';
 import crypto from 'crypto';
 
 // Ensure data directory exists
-const DATA_DIR = join(import.meta.dir, 'data');
+const DATA_DIR = join(import.meta.dir, '/../data');
 if (!existsSync(DATA_DIR)) mkdirSync(DATA_DIR);
 
 const db = new Database(join(DATA_DIR, 'nort.db'));
 
 // Enable foreign keys
 db.run('PRAGMA foreign_keys = ON');
+
+// Migration: Add private column to participants table if it doesn't exist
+const tableInfo = db.prepare('PRAGMA table_info(participants)').all() as { name: string }[];
+const hasPrivateColumn = tableInfo.some(column => column.name === 'private');
+
+if (!hasPrivateColumn) {
+  try {
+    db.run('ALTER TABLE participants ADD COLUMN private BOOLEAN DEFAULT 1');
+    console.log('Added private column to participants table');
+  } catch (error) {
+    // Column might already exist, which is fine
+    console.log('Private column already exists or could not be added:', error);
+  }
+}
 
 // Create users table if it doesn't exist
 db.run(`
@@ -42,6 +56,7 @@ db.run(`
     type TEXT NOT NULL CHECK(type IN ('user', 'llm')),
     user_id INTEGER,
     metadata JSON,
+    private BOOLEAN DEFAULT 1,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
   )
@@ -111,6 +126,7 @@ type Participant = {
   type: ParticipantType;
   user_id?: number;
   metadata?: Record<string, any>;
+  private: boolean;
   created_at: string;
 }
 
@@ -217,10 +233,16 @@ export function deleteExpiredTokens(): [number, Error | null] {
   }
 }
 
-export function createParticipant(name: string, type: ParticipantType, userId?: number, metadata?: Record<string, any>): [Participant | null, Error | null] {
+export function createParticipant(
+  name: string, 
+  type: ParticipantType, 
+  userId?: number, 
+  metadata?: Record<string, any>,
+  isPrivate: boolean = true
+): [Participant | null, Error | null] {
   try {
-    const stmt = db.prepare('INSERT INTO participants (name, type, user_id, metadata) VALUES (?, ?, ?, ?) RETURNING *');
-    const participant = stmt.get(name, type, userId || null, metadata ? JSON.stringify(metadata) : null) as Participant;
+    const stmt = db.prepare('INSERT INTO participants (name, type, user_id, metadata, private) VALUES (?, ?, ?, ?, ?) RETURNING *');
+    const participant = stmt.get(name, type, userId || null, metadata ? JSON.stringify(metadata) : null, isPrivate ? 1 : 0) as Participant;
     return [participant, null];
   } catch (error) {
     return [null, error as Error];
@@ -229,10 +251,30 @@ export function createParticipant(name: string, type: ParticipantType, userId?: 
 
 export function getParticipantByUserId(userId: number): [Participant | null, Error | null] {
   try {
-    const stmt = db.prepare('SELECT * FROM participants WHERE user_id = ? AND type = "user" LIMIT 1');
+    const stmt = db.prepare(`
+      SELECT 
+        id,
+        name,
+        type,
+        user_id,
+        metadata,
+        COALESCE(private, 1) as private,
+        created_at
+      FROM participants 
+      WHERE user_id = ? AND type = "user" 
+      LIMIT 1
+    `);
     const participant = stmt.get(userId) as Participant | null;
-    return [participant, null];
+    
+    if (!participant) return [null, null];
+
+    return [{
+      ...participant,
+      metadata: typeof participant.metadata === 'string' ? JSON.parse(participant.metadata) : participant.metadata,
+      private: Boolean(participant.private)
+    }, null];
   } catch (error) {
+    console.error('Error in getParticipantByUserId:', error);
     return [null, error as Error];
   }
 }
@@ -405,18 +447,21 @@ export function forkConversation(conversationId: number, userId: number, title?:
       conversationId
     ) as Conversation;
 
-    // Copy all messages from original conversation
+    // Copy only messages with public participants or owned by the user
     const copyStmt = db.prepare(`
       INSERT INTO messages (conversation_id, participant_id, parent_id, content, metadata)
-      SELECT ?, participant_id, parent_id, content, metadata
-      FROM messages
-      WHERE conversation_id = ?
+      SELECT ?, m.participant_id, m.parent_id, m.content, m.metadata
+      FROM messages m
+      JOIN participants p ON p.id = m.participant_id
+      WHERE m.conversation_id = ?
+      AND (p.type = 'user' OR (p.type = 'llm' AND (COALESCE(p.private, 1) = 0 OR p.user_id = ?)))
     `);
     
-    copyStmt.run(forkedConversation.id, conversationId);
+    copyStmt.run(forkedConversation.id, conversationId, userId);
     
     return [forkedConversation, null];
   } catch (error) {
+    console.error('Error in forkConversation:', error);
     return [null, error as Error];
   }
 }
@@ -461,33 +506,60 @@ export function canUserAccessConversation(conversationId: number, userId: number
   }
 }
 
-export function getLLMParticipants(): [Participant[] | null, Error | null] {
+export function getLLMParticipants(userId?: number): [Participant[] | null, Error | null] {
   try {
-    const stmt = db.prepare('SELECT * FROM participants WHERE type = "llm" ORDER BY name ASC');
-    const participants = stmt.all() as Participant[];
+    const stmt = db.prepare(`
+      SELECT 
+        id,
+        name,
+        type,
+        user_id,
+        metadata,
+        COALESCE(private, 1) as private,
+        created_at
+      FROM participants 
+      WHERE type = "llm" 
+      AND (COALESCE(private, 1) = 0 OR user_id = ?)
+      ORDER BY name ASC
+    `);
+    const participants = stmt.all(userId || null) as Participant[];
     
-    // Parse metadata JSON strings
     return [participants.map(p => ({
       ...p,
-      metadata: typeof p.metadata === 'string' ? JSON.parse(p.metadata) : p.metadata
+      metadata: typeof p.metadata === 'string' ? JSON.parse(p.metadata) : p.metadata,
+      private: Boolean(p.private) // Ensure private is always a boolean
     })), null];
   } catch (error) {
+    console.error('Error in getLLMParticipants:', error);
     return [null, error as Error];
   }
 }
 
 export function getParticipantById(id: number): [Participant | null, Error | null] {
   try {
-    const stmt = db.prepare('SELECT * FROM participants WHERE id = ?');
+    const stmt = db.prepare(`
+      SELECT 
+        id,
+        name,
+        type,
+        user_id,
+        metadata,
+        COALESCE(private, 1) as private,
+        created_at
+      FROM participants 
+      WHERE id = ?
+    `);
     const participant = stmt.get(id) as Participant | null;
     
     if (!participant) return [null, null];
     
     return [{
       ...participant,
-      metadata: typeof participant.metadata === 'string' ? JSON.parse(participant.metadata) : participant.metadata
+      metadata: typeof participant.metadata === 'string' ? JSON.parse(participant.metadata) : participant.metadata,
+      private: Boolean(participant.private) // Ensure private is always a boolean
     }, null];
   } catch (error) {
+    console.error('Error in getParticipantById:', error);
     return [null, error as Error];
   }
 }
@@ -495,17 +567,105 @@ export function getParticipantById(id: number): [Participant | null, Error | nul
 export function getConversationMessagesAfter(conversationId: number, lastMessageId: number): [Message[] | null, Error | null] {
     try {
         const messages = db.prepare(`
-            SELECT m.*, p.type as participant_type, p.metadata as participant_metadata
+            SELECT 
+              m.*,
+              p.type as participant_type,
+              p.metadata as participant_metadata,
+              COALESCE(p.private, 1) as participant_private
             FROM messages m
             JOIN participants p ON m.participant_id = p.id
             WHERE m.conversation_id = ? AND m.id > ?
             ORDER BY m.created_at ASC
-        `).all(conversationId, lastMessageId) as (Message & { participant_type: string, participant_metadata: string })[];
+        `).all(conversationId, lastMessageId) as (Message & { 
+          participant_type: string;
+          participant_metadata: string;
+          participant_private: number;
+        })[];
 
-        return [messages, null];
+        return [messages.map(m => ({
+          ...m,
+          participant_metadata: typeof m.participant_metadata === 'string' ? 
+            JSON.parse(m.participant_metadata) : m.participant_metadata,
+          participant_private: Boolean(m.participant_private)
+        })), null];
     } catch (error) {
+        console.error('Error in getConversationMessagesAfter:', error);
         return [null, error as Error];
     }
+}
+
+export function setParticipantPrivacy(participantId: number, isPrivate: boolean): [boolean, Error | null] {
+  try {
+    const stmt = db.prepare('UPDATE participants SET private = ? WHERE id = ? AND type = "llm"');
+    const result = stmt.run(isPrivate ? 1 : 0, participantId);
+    return [result.changes > 0, null];
+  } catch (error) {
+    return [false, error as Error];
+  }
+}
+
+export function cloneParticipant(participantId: number, userId: number): [Participant | null, Error | null] {
+  try {
+    const sourceStmt = db.prepare(`
+      SELECT 
+        id,
+        name,
+        type,
+        user_id,
+        metadata,
+        COALESCE(private, 1) as private,
+        created_at
+      FROM participants 
+      WHERE id = ? AND type = "llm"
+    `);
+    const source = sourceStmt.get(participantId) as Participant;
+    
+    if (!source) return [null, new Error('Participant not found or not an LLM')];
+    
+    const [newParticipant, err] = createParticipant(
+      `${source.name} (clone)`,
+      'llm',
+      userId,
+      typeof source.metadata === 'string' ? JSON.parse(source.metadata) : source.metadata
+    );
+
+    return [newParticipant, err];
+  } catch (error) {
+    console.error('Error in cloneParticipant:', error);
+    return [null, error as Error];
+  }
+}
+
+// Add a function to get all participants for a conversation
+export function getConversationParticipants(conversationId: number, userId: number): [Participant[] | null, Error | null] {
+  try {
+    const stmt = db.prepare(`
+      SELECT DISTINCT
+        p.id,
+        p.name,
+        p.type,
+        p.user_id,
+        p.metadata,
+        COALESCE(p.private, 1) as private,
+        p.created_at
+      FROM participants p
+      JOIN messages m ON m.participant_id = p.id
+      WHERE m.conversation_id = ?
+      AND (p.type = 'user' OR (p.type = 'llm' AND (COALESCE(p.private, 1) = 0 OR p.user_id = ?)))
+      ORDER BY p.name ASC
+    `);
+    
+    const participants = stmt.all(conversationId, userId) as Participant[];
+    
+    return [participants.map(p => ({
+      ...p,
+      metadata: typeof p.metadata === 'string' ? JSON.parse(p.metadata) : p.metadata,
+      private: Boolean(p.private)
+    })), null];
+  } catch (error) {
+    console.error('Error in getConversationParticipants:', error);
+    return [null, error as Error];
+  }
 }
 
 export default db; 

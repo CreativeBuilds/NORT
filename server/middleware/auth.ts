@@ -1,5 +1,5 @@
 import { Response, NextFunction } from 'express'
-import { getUserByToken } from '../../db'
+import { getUserByToken } from '../db'
 import { AuthenticatedRequest } from '../types/request'
 
 export const authenticate = async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {

@@ -1,5 +1,5 @@
-import { DatabaseMessage } from '../classes/chat';
-import { client, ASSISTANT, SYSTEM, USER, END_HEADER_ID, START_HEADER_ID, SEED } from '../../constants';
+import { DatabaseMessage, ChatHistory } from '../classes/chat';
+import { client, ASSISTANT, SYSTEM, USER, END_HEADER_ID, START_HEADER_ID, SEED } from '../constants';
 
 const TIMEOUT_MS = 30000; // 30 second timeout
 
@@ -17,12 +17,12 @@ export class ChatService {
                     stream: false, // Changed to false since we handle streaming via SSE
                     prompt,
                     temperature: 1.1,
-                    max_tokens: 1024,
+                    max_tokens: 333,
                     top_p: 0.8,
                     frequency_penalty: 0.1,
                     presence_penalty: 0.1,
                     seed: SEED,
-                    stop: [USER, ASSISTANT, SYSTEM, "</tool_call>", END_HEADER_ID, START_HEADER_ID, "\n"],
+                    stop: [USER, ASSISTANT, SYSTEM, "</tool_call>", "<｜start_header_id｜>", END_HEADER_ID, START_HEADER_ID, "\n"],
                     provider: {
                         order: ["Targon"],
                         allow_fallbacks: false
@@ -53,18 +53,9 @@ export class ChatService {
     }
 
     private static buildPrompt(messages: DatabaseMessage[], systemPrompt?: string): string {
-        const parts: string[] = [];
-
-        if (systemPrompt) {
-            parts.push(`${SYSTEM}${systemPrompt}`);
-        }
-
-        for (const message of messages) {
-            const roleToken = message.participant_type === 'llm' ? ASSISTANT : USER;
-            parts.push(`${roleToken}${message.content}`);
-        }
-
-        parts.push(ASSISTANT);
-        return parts.join('\n');
+        const chatHistory = new ChatHistory(messages, systemPrompt);
+        const [prompt, err] = chatHistory.toPrompt();
+        if (err) throw err;
+        return prompt;
     }
 } 

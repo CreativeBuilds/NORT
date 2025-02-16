@@ -1,7 +1,7 @@
 import { Router, Request, Response } from 'express'
 import { hash, compare } from 'bcrypt'
 import crypto from 'crypto'
-import { createUser, getUserByUsername, createAuthToken } from '../../db'
+import { createUser, getUserByUsername, createAuthToken } from '../db'
 
 const router = Router()
 

@@ -1,5 +1,5 @@
 import { Response, NextFunction } from 'express'
-import { getParticipantByUserId, createParticipant } from '../../db'
+import { getParticipantByUserId, createParticipant } from '../db'
 import { AuthenticatedRequest } from '../types/request'
 
 export const ensureParticipant = async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {

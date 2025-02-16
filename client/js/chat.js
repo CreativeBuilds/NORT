@@ -1,16 +1,25 @@
 let currentConversationId = null;
 let eventSource = null;
 let lastKnownMessageId = null; // Track the last message ID we've seen
+let currentParticipants = []; // Track current participants
 
-// Check for conversation ID in URL on load
-window.addEventListener('load', () => {
-    const pathParts = window.location.pathname.split('/');
-    const conversationId = pathParts[pathParts.length - 1];
-    if (conversationId && !isNaN(conversationId)) {
-        currentConversationId = parseInt(conversationId);
-        loadConversation(currentConversationId);
+// Initialize the chat interface
+async function initializeChat() {
+    try {
+        // Load all available personas first
+        await loadParticipants();
+
+        // Then check for conversation ID in URL
+        const pathParts = window.location.pathname.split('/');
+        const conversationId = pathParts[pathParts.length - 1];
+        if (conversationId && !isNaN(conversationId)) {
+            currentConversationId = parseInt(conversationId);
+            await loadConversation(currentConversationId);
+        }
+    } catch (error) {
+        console.error('Error initializing chat:', error);
     }
-});
+}
 
 // Handle sending messages
 async function sendMessage() {
@@ -214,3 +223,269 @@ window.addEventListener('popstate', () => {
 window.handleKeyPress = handleKeyPress;
 window.sendMessage = sendMessage;
 window.loadConversation = loadConversation;
+
+// Load and display AI participants
+async function loadParticipants() {
+    try {
+        const response = await fetch(`${window.API_BASE}/participants/llm`, {
+            headers: {
+                'Authorization': `Bearer ${window.getAuthToken()}`
+            }
+        });
+
+        if (!response.ok) throw new Error('Failed to load participants');
+
+        const data = await response.json();
+        if (!data.participants) {
+            console.error('No participants data received:', data);
+            return [null, new Error('No participants data received')];
+        }
+
+        // Deduplicate participants by ID
+        const uniqueParticipants = Array.from(new Map(data.participants.map(p => [p.id, p])).values());
+        currentParticipants = uniqueParticipants;
+        displayParticipants(uniqueParticipants);
+        return [uniqueParticipants, null];
+    } catch (error) {
+        console.error('Error loading participants:', error);
+        return [null, error];
+    }
+}
+
+// Display participants in the select dropdown
+function displayParticipants(participants) {
+    if (!participants) {
+        console.error('No participants provided to displayParticipants');
+        return;
+    }
+
+    const select = document.getElementById('llm-select');
+    if (!select) {
+        console.error('Could not find llm-select element');
+        return;
+    }
+
+    select.innerHTML = '<option value="">Select AI (Optional)</option>';
+    
+    participants.forEach(participant => {
+        if (!participant || !participant.id || !participant.name) {
+            console.error('Invalid participant data:', participant);
+            return;
+        }
+
+        const option = document.createElement('option');
+        option.value = participant.id;
+        
+        const container = document.createElement('div');
+        container.className = 'llm-option';
+        
+        // Add name and privacy badge
+        container.innerHTML = `
+            ${participant.name}
+            <span class="privacy-badge ${participant.private ? 'private' : ''}">${participant.private ? 'Private' : 'Public'}</span>
+        `;
+        
+        option.innerHTML = container.innerHTML;
+        select.appendChild(option);
+    });
+
+    // Also update the management modal if it exists
+    const llmList = document.getElementById('llm-list');
+    if (llmList) {
+        llmList.innerHTML = '';
+        participants.forEach(participant => {
+            if (!participant || !participant.id || !participant.name || !participant.metadata) {
+                console.error('Invalid participant data for management list:', participant);
+                return;
+            }
+
+            const item = document.createElement('div');
+            item.className = 'llm-item';
+            item.innerHTML = `
+                <div class="llm-item-header">
+                    <div class="llm-item-name">
+                        ${participant.name}
+                        <span class="privacy-badge ${participant.private ? 'private' : ''}">${participant.private ? 'Private' : 'Public'}</span>
+                    </div>
+                    <div class="llm-actions">
+                        <button class="clone-btn" onclick="handleCloneParticipant(${participant.id})">Clone</button>
+                        <button class="privacy-btn ${participant.private ? '' : 'public'}" onclick="handleTogglePrivacy(${participant.id}, ${!participant.private})">
+                            Make ${participant.private ? 'Public' : 'Private'}
+                        </button>
+                    </div>
+                </div>
+                <div class="llm-item-details">
+                    <div>Temperature: ${participant.metadata.temperature}</div>
+                    <div>System Prompt:</div>
+                    <div class="llm-item-prompt">${participant.metadata.system_prompt}</div>
+                </div>
+            `;
+            llmList.appendChild(item);
+        });
+    }
+}
+
+// Create new AI participant
+async function createParticipant(name, systemPrompt, temperature, isPrivate) {
+    try {
+        const response = await fetch(`${window.API_BASE}/participants/llm`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${window.getAuthToken()}`
+            },
+            body: JSON.stringify({
+                name,
+                metadata: {
+                    system_prompt: systemPrompt,
+                    temperature: parseFloat(temperature)
+                },
+                isPrivate
+            })
+        });
+
+        if (!response.ok) throw new Error('Failed to create participant');
+
+        const data = await response.json();
+        // Don't reload here since we'll reload after modal closes
+        return [data.participant, null];
+    } catch (error) {
+        console.error('Error creating participant:', error);
+        return [null, error];
+    }
+}
+
+// Clone an AI participant
+async function cloneParticipant(id) {
+    try {
+        const response = await fetch(`${window.API_BASE}/participants/llm/${id}/clone`, {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${window.getAuthToken()}`
+            }
+        });
+
+        if (!response.ok) throw new Error('Failed to clone participant');
+
+        const data = await response.json();
+        // Don't reload here since we'll reload after alert
+        return [data.participant, null];
+    } catch (error) {
+        console.error('Error cloning participant:', error);
+        return [null, error];
+    }
+}
+
+// Toggle participant privacy
+async function toggleParticipantPrivacy(id, isPrivate) {
+    try {
+        const response = await fetch(`${window.API_BASE}/participants/llm/${id}/privacy`, {
+            method: 'PATCH',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${window.getAuthToken()}`
+            },
+            body: JSON.stringify({ isPrivate })
+        });
+
+        if (!response.ok) throw new Error('Failed to update privacy');
+        // Don't reload here since we'll reload after alert
+        return [true, null];
+    } catch (error) {
+        console.error('Error updating privacy:', error);
+        return [false, error];
+    }
+}
+
+// Event Listeners
+document.addEventListener('DOMContentLoaded', () => {
+    // Initialize chat interface
+    initializeChat().catch(console.error);
+
+    // Handle create AI form submission
+    const createLLMModal = document.getElementById('create-llm-modal');
+    const manageLLMModal = document.getElementById('manage-llm-modal');
+    const createLLMBtn = document.getElementById('create-llm-btn');
+    const addLLMBtn = document.getElementById('add-llm-btn');
+    const manageLLMBtn = document.createElement('button');
+    manageLLMBtn.className = 'manage-llm-btn';
+    manageLLMBtn.textContent = 'Manage';
+    document.getElementById('llm-container').appendChild(manageLLMBtn);
+    
+    // Close modal buttons
+    document.querySelectorAll('.close-modal').forEach(btn => {
+        btn.addEventListener('click', async () => {
+            // Check if either modal is active before closing
+            const wasActive = createLLMModal.classList.contains('active') || manageLLMModal.classList.contains('active');
+            
+            // Close modals
+            createLLMModal.classList.remove('active');
+            manageLLMModal.classList.remove('active');
+            
+            // Only reload if a modal was active
+            if (wasActive) {
+                await loadParticipants();
+            }
+        });
+    });
+
+    // Open create modal
+    addLLMBtn.addEventListener('click', () => {
+        createLLMModal.classList.add('active');
+    });
+
+    // Open manage modal
+    manageLLMBtn.addEventListener('click', () => {
+        manageLLMModal.classList.add('active');
+    });
+    
+    createLLMBtn.addEventListener('click', async () => {
+        const name = document.getElementById('llm-name').value.trim();
+        const systemPrompt = document.getElementById('llm-system-prompt').value.trim();
+        const temperature = document.getElementById('llm-temperature').value;
+        const isPrivate = document.getElementById('llm-private').checked;
+
+        if (!name || !systemPrompt) {
+            alert('Please fill in all required fields');
+            return;
+        }
+
+        const [participant, error] = await createParticipant(name, systemPrompt, temperature, isPrivate);
+        if (error) {
+            alert('Failed to create AI participant');
+            return;
+        }
+
+        // Close modal and reset form
+        createLLMModal.classList.remove('active');
+        document.getElementById('llm-name').value = '';
+        document.getElementById('llm-system-prompt').value = '';
+        document.getElementById('llm-temperature').value = '0.7';
+        document.getElementById('llm-private').checked = true;
+        
+        // Reload participants
+        await loadParticipants();
+    });
+});
+
+// Handle cloning a participant
+async function handleCloneParticipant(id) {
+    const [participant, error] = await cloneParticipant(id);
+    if (error) {
+        alert('Failed to clone AI participant');
+        return;
+    }
+    alert('AI participant cloned successfully!');
+    await loadParticipants(); // Reload after successful clone
+}
+
+// Handle toggling participant privacy
+async function handleTogglePrivacy(id, makePrivate) {
+    const [success, error] = await toggleParticipantPrivacy(id, makePrivate);
+    if (error) {
+        alert('Failed to update AI privacy settings');
+        return;
+    }
+    alert('AI privacy settings updated successfully!');
+    await loadParticipants(); // Reload after successful privacy update
+}

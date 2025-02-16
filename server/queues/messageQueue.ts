@@ -1,6 +1,6 @@
 import Queue from 'bull';
 import { sendSSEEvent } from '../utils/sse';
-import { createMessage, getParticipantById, getConversationMessages } from '../../db';
+import { createMessage, getParticipantById, getConversationMessages } from '../db';
 import { ChatService } from '../services/chat.service';
 import { DatabaseMessage } from '../classes/chat';
 

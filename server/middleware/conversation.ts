@@ -1,5 +1,5 @@
 import { Response, NextFunction } from 'express'
-import { canUserAccessConversation } from '../../db'
+import { canUserAccessConversation } from '../db'
 import { AuthenticatedRequest } from '../types/request'
 
 export const checkConversationAccess = async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {

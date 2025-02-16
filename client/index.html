@@ -197,6 +197,109 @@
             cursor: pointer;
             font-size: 14px;
         }
+
+        .llm-option {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+        }
+
+        .llm-option .privacy-badge {
+            font-size: 12px;
+            padding: 2px 6px;
+            border-radius: 10px;
+            background: #E9E9EB;
+        }
+
+        .llm-option .privacy-badge.private {
+            background: #FF9500;
+            color: white;
+        }
+
+        .llm-actions {
+            display: flex;
+            gap: 10px;
+            margin-top: 10px;
+        }
+
+        .llm-actions button {
+            padding: 5px 10px;
+            font-size: 12px;
+        }
+
+        .llm-actions .clone-btn {
+            background: #34C759;
+        }
+
+        .llm-actions .privacy-btn {
+            background: #FF9500;
+        }
+
+        .llm-actions .privacy-btn.public {
+            background: #34C759;
+        }
+
+        #llm-select {
+            min-width: 200px;
+        }
+
+        #llm-list {
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+        }
+
+        .llm-item {
+            padding: 15px;
+            border: 1px solid #ccc;
+            border-radius: 8px;
+            background: #f9f9f9;
+        }
+
+        .llm-item-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 10px;
+        }
+
+        .llm-item-name {
+            font-weight: bold;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .llm-item-details {
+            margin-top: 10px;
+            font-size: 14px;
+            color: #666;
+        }
+
+        .llm-item-prompt {
+            margin-top: 5px;
+            font-family: monospace;
+            background: #fff;
+            padding: 8px;
+            border-radius: 4px;
+            border: 1px solid #eee;
+            white-space: pre-wrap;
+        }
+
+        #llm-container {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+
+        #llm-actions {
+            display: flex;
+            gap: 10px;
+        }
+
+        .manage-llm-btn {
+            background: #5856D6;
+        }
     </style>
 </head>
 <body>
@@ -249,10 +352,32 @@
                 <textarea id="llm-system-prompt" placeholder="Enter the system prompt that defines this AI's behavior and expertise..."></textarea>
             </div>
             <div class="form-group">
-                <label for="llm-temperature">Temperature (0.0 - 2.0)</label>
+                <label for="llm-temperature">Temperature (0-2)</label>
                 <input type="number" id="llm-temperature" min="0" max="2" step="0.1" value="0.7">
             </div>
-            <button id="create-llm-btn">Create AI Participant</button>
+            <div class="form-group">
+                <label>
+                    <input type="checkbox" id="llm-private" checked>
+                    Keep this AI private
+                </label>
+                <small style="display: block; color: #666; margin-top: 5px;">
+                    Private AIs are only accessible by you. Public AIs can be used by anyone who has access to conversations where they're used.
+                </small>
+            </div>
+            <button id="create-llm-btn">Create AI</button>
+        </div>
+    </div>
+
+    <!-- Modal for managing AI participants -->
+    <div id="manage-llm-modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>Manage AI Participants</h3>
+                <button class="close-modal">&times;</button>
+            </div>
+            <div id="llm-list">
+                <!-- AI participants will be listed here -->
+            </div>
         </div>
     </div>
 

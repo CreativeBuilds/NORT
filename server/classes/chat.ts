@@ -1,4 +1,4 @@
-import { ASSISTANT, SYSTEM, USER } from "../../constants";
+import { ASSISTANT, SYSTEM, USER, START_HEADER_ID, END_HEADER_ID } from "../constants";
 
 export type ChatMessage = {
     id: string
@@ -71,7 +71,8 @@ export class ChatHistory {
             for (const message of this.messages) {
                 const role = this.getParticipantRole(message);
                 const roleToken = role === 'ASSISTANT' ? ASSISTANT : USER;
-                parts.push(`${roleToken}${message.content}`);
+                const headerInfo = `${START_HEADER_ID}id:${message.participant_id}|name:${message.participant_name || 'unknown'}${END_HEADER_ID}`;
+                parts.push(`${headerInfo}${roleToken}${message.content}`);
             }
 
             // Add final assistant token to indicate it's the AI's turn
