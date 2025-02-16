@@ -1,5 +1,6 @@
 let currentConversationId = null;
 let eventSource = null;
+let lastKnownMessageId = null; // Track the last message ID we've seen
 
 // Check for conversation ID in URL on load
 window.addEventListener('load', () => {
@@ -18,7 +19,7 @@ async function sendMessage() {
     const llmSelect = document.getElementById('llm-select');
     const desired_participant_id = llmSelect.value || undefined;
 
-    if (!content) return;
+    if (!content) return [null, new Error('No content provided')];
 
     try {
         const endpoint = currentConversationId ? 
@@ -44,20 +45,20 @@ async function sendMessage() {
         // Set conversation ID if this is the first message
         if (!currentConversationId) {
             currentConversationId = data.conversation.id;
+            displayMessages(data.messages);
+            connectToSSE();
             // Update URL without reload
             window.history.pushState({}, '', `/chat/${currentConversationId}`);
-            // Connect to SSE for real-time updates
-            connectToSSE();
-            // Display initial messages
-            displayMessages(data.messages);
         }
 
         // Clear input
         input.value = '';
+        return [data, null];
         
     } catch (error) {
         console.error('Error sending message:', error);
         alert('Failed to send message. Please try again.');
+        return [null, error];
     }
 }
 
@@ -99,6 +100,8 @@ function displayMessages(messages) {
     messages.forEach(message => {
         const messageElement = createMessageElement(message);
         messagesContainer.appendChild(messageElement);
+        // Update last known message ID
+        if (message.id > (lastKnownMessageId || 0)) lastKnownMessageId = message.id;
     });
     
     // Scroll to bottom
@@ -127,8 +130,12 @@ function connectToSSE() {
     }
 
     // Ensure we use absolute path for SSE URL and include auth token
-    const url = `${window.location.origin}${window.API_BASE}/chat/${currentConversationId}/events?auth_token=${authToken}`;
-    eventSource = new EventSource(url);
+    const url = new URL(`${window.location.origin}${window.API_BASE}/chat/${currentConversationId}/events`);
+    url.searchParams.append('auth_token', authToken);
+    // Only include last_message_id if we have one
+    if (lastKnownMessageId !== null) url.searchParams.append('last_message_id', lastKnownMessageId);
+    
+    eventSource = new EventSource(url.toString());
 
     eventSource.onopen = () => {
         console.log('SSE connection established');
@@ -160,6 +167,8 @@ function handleSSEEvent(event) {
             const messageElement = createMessageElement(message);
             messagesContainer.appendChild(messageElement);
             messageElement.scrollIntoView({ behavior: 'smooth' });
+            // Update last known message ID
+            if (message.id > (lastKnownMessageId || 0)) lastKnownMessageId = message.id;
             break;
         }
 
@@ -204,4 +213,4 @@ window.addEventListener('popstate', () => {
 // Export functions needed by auth.js
 window.handleKeyPress = handleKeyPress;
 window.sendMessage = sendMessage;
-window.loadConversation = loadConversation; 
+window.loadConversation = loadConversation;

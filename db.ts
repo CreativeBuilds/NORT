@@ -492,4 +492,20 @@ export function getParticipantById(id: number): [Participant | null, Error | nul
   }
 }
 
+export function getConversationMessagesAfter(conversationId: number, lastMessageId: number): [Message[] | null, Error | null] {
+    try {
+        const messages = db.prepare(`
+            SELECT m.*, p.type as participant_type, p.metadata as participant_metadata
+            FROM messages m
+            JOIN participants p ON m.participant_id = p.id
+            WHERE m.conversation_id = ? AND m.id > ?
+            ORDER BY m.created_at ASC
+        `).all(conversationId, lastMessageId) as (Message & { participant_type: string, participant_metadata: string })[];
+
+        return [messages, null];
+    } catch (error) {
+        return [null, error as Error];
+    }
+}
+
 export default db; 

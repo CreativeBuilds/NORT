@@ -4,6 +4,7 @@ import {
 	getConversation, 
 	createMessage, 
 	getConversationMessages,
+	getConversationMessagesAfter,
 	getUserConversations,
 	createShareLink,
 	getConversationByShareToken,
@@ -57,11 +58,12 @@ router.get('/:id', authenticate, checkConversationAccess, async (req: Authentica
 router.get('/:id/events', async (req: AuthenticatedRequest, res: Response): Promise<void> => {
 	const conversationId = parseInt(req.params.id);
 	const authToken = req.query.auth_token as string;
+	const lastMessageId = req.query.last_message_id ? parseInt(req.query.last_message_id as string) : null;
 	
 	if (!authToken) { res.status(401).json({ error: 'No auth token provided' }); return }
 
 	// Verify auth token
-	const [user, userError] = getUserByToken(authToken);
+	const [user, userError] = await getUserByToken(authToken);
 	if (userError || !user) { res.status(401).json({ error: 'Invalid auth token' }); return }
 	req.user = user;
 
@@ -79,6 +81,22 @@ router.get('/:id/events', async (req: AuthenticatedRequest, res: Response): Prom
 	
 	// Send initial connection established event
 	res.write('event: connected\ndata: {}\n\n');
+
+	// If lastMessageId is provided, send any missed messages
+	// If not provided, send all messages for initial load
+	const [messages, error] = lastMessageId !== null ? 
+		await getConversationMessagesAfter(conversationId, lastMessageId) :
+		await getConversationMessages(conversationId);
+
+	if (!error && messages && messages.length > 0) {
+		messages.forEach(message => {
+			const eventData = `data: ${JSON.stringify({
+				type: 'message_added',
+				data: { message }
+			})}\n\n`;
+			res.write(eventData);
+		});
+	}
 
 	// Add client to tracking
 	addClient(conversationId, res);
