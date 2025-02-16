@@ -39,13 +39,40 @@ export type Role = 'USER' | 'ASSISTANT' | 'SYSTEM';
 export class ChatHistory {
     private messages: DatabaseMessage[] = [];
     private systemPrompt: string | null = null;
+    private conversationId: number = 0;
+    private nextResponderId: number | null = null;
 
-    constructor(messages: DatabaseMessage[] = [], systemPrompt?: string) {
-        this.messages = messages;
+    constructor(messages: DatabaseMessage[] = [], systemPrompt?: string, nextResponderId?: number) {
+        // Ensure all messages are from the same conversation
+        if (messages.length > 0) {
+            this.conversationId = messages[0].conversation_id;
+            
+            // Validate all messages belong to the same conversation
+            const invalidMessage = messages.find(m => m.conversation_id !== this.conversationId);
+            if (invalidMessage) {
+                throw new Error(`Message ${invalidMessage.id} belongs to conversation ${invalidMessage.conversation_id} but expected ${this.conversationId}`);
+            }
+            
+            // Sort messages by creation time to ensure correct order
+            this.messages = [...messages].sort((a, b) => 
+                new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
+            );
+        }
         this.systemPrompt = systemPrompt || null;
+        this.nextResponderId = nextResponderId || null;
     }
 
     addMessage(message: DatabaseMessage): void {
+        // Validate message belongs to the same conversation
+        if (this.messages.length > 0 && message.conversation_id !== this.conversationId) {
+            throw new Error(`Cannot add message from conversation ${message.conversation_id} to history of conversation ${this.conversationId}`);
+        }
+        
+        // Set conversation ID if this is the first message
+        if (this.messages.length === 0) {
+            this.conversationId = message.conversation_id;
+        }
+        
         this.messages.push(message);
     }
 
@@ -58,8 +85,11 @@ export class ChatHistory {
         return 'USER';
     }
 
-    toPrompt(): [string, Error | null] {
+    toPromptParts(): [string[], Error | null] {
         try {
+            if (!this.conversationId) return [[], new Error('No conversation ID set')];
+            if (!this.nextResponderId) return [[], new Error('No next responder set')];
+
             const parts: string[] = [];
 
             // Add system prompt if exists
@@ -69,18 +99,37 @@ export class ChatHistory {
 
             // Add messages in chronological order
             for (const message of this.messages) {
+                // Double-check message belongs to this conversation
+                if (message.conversation_id !== this.conversationId) {
+                    return [[], new Error(`Message ${message.id} belongs to wrong conversation`)];
+                }
+
+                // Skip empty continuation messages entirely
+                if (message.metadata?.is_continuation) continue;
+
                 const role = this.getParticipantRole(message);
                 const roleToken = role === 'ASSISTANT' ? ASSISTANT : USER;
                 const headerInfo = `${START_HEADER_ID}id:${message.participant_id}|name:${message.participant_name || 'unknown'}${END_HEADER_ID}`;
                 parts.push(`${headerInfo}${roleToken}${message.content}`);
             }
 
-            // Add final assistant token to indicate it's the AI's turn
-            parts.push(ASSISTANT);
+            parts.push(`${SYSTEM}Do not use emojis in your response.`)
 
-            return [parts.join('\n'), null];
+            // Get last message to check if it's from the same assistant
+            const [lastMessage, err] = this.getLastMessage();
+            const isContinuation = !err && lastMessage?.content === '';
+
+            if (isContinuation) {
+                // For continuations, add a newline and continuation marker
+                parts.push(`\nI`);
+            } else {
+                // Otherwise add the standard assistant header and token
+                parts.push(`${START_HEADER_ID}id:${this.nextResponderId}${END_HEADER_ID}${ASSISTANT}`);
+            }
+
+            return [parts, null];
         } catch (error) {
-            return ['', error instanceof Error ? error : new Error('Unknown error occurred')];
+            return [[], error instanceof Error ? error : new Error('Unknown error occurred')];
         }
     }
 
@@ -114,5 +163,9 @@ export class ChatHistory {
     clear(): void {
         this.messages = [];
         this.systemPrompt = null;
+    }
+
+    setNextResponder(participantId: number): void {
+        this.nextResponderId = participantId;
     }
 }

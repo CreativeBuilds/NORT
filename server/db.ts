@@ -812,4 +812,38 @@ export function setDefaultPersona(userId: number, personaId: number): [boolean, 
   }
 }
 
+export function deleteMessage(messageId: number, userId: number): [boolean, Error | null] {
+  try {
+    // First verify the user owns the conversation this message is in
+    const [message, messageError] = getMessageById(messageId);
+    if (messageError || !message) return [false, new Error('Message not found')];
+
+    const [conversation, conversationError] = getConversation(message.conversation_id);
+    if (conversationError || !conversation) return [false, new Error('Conversation not found')];
+
+    // Verify ownership
+    if (conversation.created_by_user_id !== userId) {
+      return [false, new Error('Not authorized to delete this message')];
+    }
+
+    // Delete the message
+    const result = db.prepare('DELETE FROM messages WHERE id = ?').run(messageId);
+    return [result.changes > 0, null];
+  } catch (error) {
+    return [false, error as Error];
+  }
+}
+
+export function getMessageById(messageId: number): [Message | null, Error | null] {
+  try {
+    const stmt = db.prepare(`
+      SELECT * FROM messages WHERE id = ?
+    `);
+    const message = stmt.get(messageId) as Message | null;
+    return [message, null];
+  } catch (error) {
+    return [null, error as Error];
+  }
+}
+
 export default db; 

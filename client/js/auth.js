@@ -4,6 +4,15 @@ let authToken = localStorage.getItem('auth_token');
 // API base URL - useful if we need to change it later
 const API_BASE = '/api/v1';
 
+// Add function to hash password using SHA-256
+async function hashPassword(password) {
+    const encoder = new TextEncoder();
+    const data = encoder.encode(password);
+    const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+    const hashArray = Array.from(new Uint8Array(hashBuffer));
+    return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
 // Add event listeners once DOM is loaded
 document.addEventListener('DOMContentLoaded', () => {
     // Auth buttons
@@ -65,10 +74,16 @@ async function handleLogin() {
     }
 
     try {
+        // Hash password before sending
+        const hashedPassword = await hashPassword(password);
+
         const response = await fetch(`${API_BASE}/auth/login`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ username, password })
+            body: JSON.stringify({ 
+                username, 
+                password: hashedPassword 
+            })
         });
 
         const data = await response.json();
@@ -101,10 +116,16 @@ async function handleSignup() {
     }
 
     try {
+        // Hash password before sending
+        const hashedPassword = await hashPassword(password);
+
         const response = await fetch(`${API_BASE}/auth/signup`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ username, password })
+            body: JSON.stringify({ 
+                username, 
+                password: hashedPassword 
+            })
         });
 
         const data = await response.json();

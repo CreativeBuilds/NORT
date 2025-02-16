@@ -1,6 +1,6 @@
 import Queue from 'bull';
 import { sendSSEEvent } from '../utils/sse';
-import { createMessage, getParticipantById, getConversationMessages } from '../db';
+import { createMessage, getParticipantById, getConversationMessages, getConversation } from '../db';
 import { ChatService } from '../services/chat.service';
 import { DatabaseMessage } from '../classes/chat';
 
@@ -21,9 +21,17 @@ messageQueue.process('process-llm-response', async (job) => {
     const [participant, participantError] = await getParticipantById(participantId);
     if (participantError || !participant) throw new Error('Failed to get participant');
 
+    // Verify this participant belongs in this conversation
+    const [conversation, conversationError] = await getConversation(conversationId);
+    if (conversationError || !conversation) throw new Error('Conversation not found');
+
     // Get conversation history
     const [messages, messagesError] = await getConversationMessages(conversationId);
     if (messagesError || !messages) throw new Error('Failed to fetch conversation history');
+
+    // Verify the message we're responding to exists in this conversation
+    const parentMessage = messages.find(m => m.id === messageId);
+    if (!parentMessage) throw new Error('Parent message not found in conversation');
 
     // Cast messages to DatabaseMessage type since they include participant info
     const databaseMessages = messages as DatabaseMessage[];
@@ -37,13 +45,25 @@ messageQueue.process('process-llm-response', async (job) => {
       }
     });
 
+
     // Generate LLM response
     const [response, error] = await ChatService.generateResponse(
       databaseMessages,
-      participant.metadata?.system_prompt
+      participant.metadata?.system_prompt,
+      participantId
     );
     
-    if (error || !response) throw error || new Error('Failed to generate response');
+    if (error || !response) {
+      // Send typing stopped and fail silently
+      sendSSEEvent(conversationId, {
+        type: 'typing_stopped',
+        data: { 
+          participant_id: participantId,
+          participant_type: participant.type
+        }
+      });
+      throw error || new Error('Failed to generate response');
+    }
 
     // Create response message
     const [message, messageError] = await createMessage(
@@ -79,14 +99,7 @@ messageQueue.process('process-llm-response', async (job) => {
 
     return message;
   } catch (error) {
-    // Send error event
-    sendSSEEvent(conversationId, {
-      type: 'error',
-      data: { 
-        error: (error as Error).message,
-        participant_id: participantId
-      }
-    });
+    // Just throw without sending any events
     throw error;
   }
 });

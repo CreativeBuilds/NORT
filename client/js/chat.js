@@ -27,11 +27,12 @@ async function initializeChat() {
 // Handle sending messages
 async function sendMessage() {
     const input = document.getElementById('message-input');
-    const content = input.value.trim();
+    const content = input.value;
     const llmSelect = document.getElementById('llm-select');
     const desired_participant_id = llmSelect.value || undefined;
 
-    if (!content) return [null, new Error('No content provided')];
+    // Require either content or a selected AI for continuation
+    if (!content && !desired_participant_id) return [null, new Error('Please select an AI for continuation')];
 
     try {
         const endpoint = currentConversationId ? 
@@ -45,8 +46,9 @@ async function sendMessage() {
                 'Authorization': `Bearer ${window.getAuthToken()}`
             },
             body: JSON.stringify({
-                content,
-                desired_participant_id
+                content: content || '',
+                desired_participant_id,
+                metadata: { is_continuation: !content }
             })
         });
 
@@ -95,13 +97,34 @@ async function loadConversation(conversationId) {
 }
 
 // Create a helper function for consistent message display
-function createMessageElement(message) {
-    const messageElement = document.createElement('div');
-    // Ensure we're using the correct participant type for styling
-    const type = message.participant_type || (message.participant_metadata ? 'llm' : 'user');
-    messageElement.className = `message ${type}`;
-    messageElement.textContent = message.content;
-    return messageElement;
+function createMessageElement(message, isOwner) {
+    const messageDiv = document.createElement('div');
+    messageDiv.className = `message ${message.participant_type === 'user' ? 'user' : 'llm'}`;
+    messageDiv.setAttribute('data-message-id', message.id);
+
+    const contentDiv = document.createElement('div');
+    contentDiv.className = 'message-content';
+    contentDiv.textContent = message.content;
+    messageDiv.appendChild(contentDiv);
+
+    // Always add delete button since we're the conversation owner
+    const deleteBtn = document.createElement('button');
+    deleteBtn.className = 'delete-btn';
+    deleteBtn.textContent = '×';
+    deleteBtn.title = 'Delete message (Hold Shift to skip confirmation)';
+    deleteBtn.onclick = async (e) => {
+        e.preventDefault();
+        if (!e.shiftKey && !confirm('Are you sure you want to delete this message?')) return;
+
+        const [success, error] = await deleteMessage(currentConversationId, message.id);
+        if (error) {
+            showError(error.message);
+            return;
+        }
+    };
+    messageDiv.appendChild(deleteBtn);
+
+    return messageDiv;
 }
 
 // Display messages in the UI
@@ -110,7 +133,7 @@ function displayMessages(messages) {
     messagesContainer.innerHTML = ''; // Clear existing messages
     
     messages.forEach(message => {
-        const messageElement = createMessageElement(message);
+        const messageElement = createMessageElement(message, message.participant_type === 'user');
         messagesContainer.appendChild(messageElement);
         // Update last known message ID
         if (message.id > (lastKnownMessageId || 0)) lastKnownMessageId = message.id;
@@ -176,7 +199,7 @@ function handleSSEEvent(event) {
         case 'message_added': {
             const message = event.data.message;
             console.log('Adding message:', message); // Debug log
-            const messageElement = createMessageElement(message);
+            const messageElement = createMessageElement(message, message.participant_type === 'user');
             messagesContainer.appendChild(messageElement);
             messageElement.scrollIntoView({ behavior: 'smooth' });
             // Update last known message ID
@@ -209,6 +232,11 @@ function handleSSEEvent(event) {
             alert(`Error: ${event.data.error}`);
             break;
         }
+
+        case 'message_deleted':
+            const messageElement = document.querySelector(`[data-message-id="${event.data.message_id}"]`);
+            if (messageElement) messageElement.remove();
+            break;
     }
 }
 
@@ -684,3 +712,28 @@ async function handleTogglePrivacy(id, makePrivate) {
 
 // Export functions for global use
 window.handleSetDefaultPersona = handleSetDefaultPersona;
+
+async function deleteMessage(conversationId, messageId) {
+    try {
+        const response = await fetch(`${window.API_BASE}/chat/${conversationId}/messages/${messageId}`, {
+            method: 'DELETE',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${window.getAuthToken()}`
+            }
+        });
+
+        if (!response.ok) {
+            const error = await response.json();
+            throw new Error(error.error || 'Failed to delete message');
+        }
+
+        return [true, null];
+    } catch (error) {
+        return [false, error];
+    }
+}
+
+function showError(message) {
+    alert(message);
+}

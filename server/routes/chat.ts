@@ -10,7 +10,8 @@ import {
 	getConversationByShareToken,
 	forkConversation,
 	getUserByToken,
-	canUserAccessConversation
+	canUserAccessConversation,
+	deleteMessage
 } from '../db'
 import { authenticate } from '../middleware/auth'
 import { ensureParticipant } from '../middleware/participant'
@@ -161,7 +162,7 @@ router.post('/:id', authenticate, ensureParticipant, async (req: AuthenticatedRe
 	const { content, parent_id, desired_participant_id } = req.body
 
 	if (isNaN(conversationId)) { res.status(400).json({ error: 'Invalid conversation ID' }); return }
-	if (!content?.trim()) { res.status(400).json({ error: 'Message content is required' }); return }
+	// if (!content?.trim()) { res.status(400).json({ error: 'Message content is required' }); return }
 
 	try {
 		// Verify conversation exists
@@ -255,5 +256,28 @@ router.post('/:id/fork', authenticate, checkConversationAccess, async (req: Auth
 		res.status(500).json({ error: (err as Error).message }); return
 	}
 })
+
+router.delete('/:conversationId/messages/:messageId', authenticate, async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+	const messageId = parseInt(req.params.messageId);
+	
+	if (!req.user?.id) { res.status(401).json({ error: 'Unauthorized' }); return }
+	if (isNaN(messageId)) { res.status(400).json({ error: 'Invalid message ID' }); return }
+
+	try {
+		const [success, error] = await deleteMessage(messageId, req.user.id);
+		if (error) { res.status(error.message.includes('Not authorized') ? 403 : 500).json({ error: error.message }); return }
+		if (!success) { res.status(404).json({ error: 'Message not found' }); return }
+
+		// Notify clients about message deletion
+		sendSSEEvent(parseInt(req.params.conversationId), {
+			type: 'message_deleted',
+			data: { message_id: messageId }
+		});
+
+		res.json({ success: true }); return
+	} catch (err) {
+		res.status(500).json({ error: (err as Error).message }); return
+	}
+});
 
 export default router
