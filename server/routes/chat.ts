@@ -18,7 +18,7 @@ import { ensureParticipant } from '../middleware/participant'
 import { checkConversationAccess } from '../middleware/conversation'
 import { AuthenticatedRequest } from '../types/request'
 import { addClient, removeClient, sendSSEEvent } from '../utils/sse'
-import messageQueue from '../queues/messageQueue'
+import messageQueue, { activeGenerations } from '../queues/messageQueue'
 
 const router = Router()
 
@@ -168,6 +168,23 @@ router.post('/:id', authenticate, ensureParticipant, async (req: AuthenticatedRe
 		// Verify conversation exists
 		const [conversation, conversationError] = await getConversation(conversationId)
 		if (conversationError || !conversation) { res.status(404).json({ error: 'Conversation not found' }); return }
+
+		// If there's an active generation for the desired participant, cancel it
+		if (desired_participant_id) {
+			const existingController = activeGenerations.get(desired_participant_id);
+			if (existingController) {
+				existingController.abort();
+				activeGenerations.delete(desired_participant_id);
+				// Send typing stopped event for the cancelled generation
+				sendSSEEvent(conversationId, {
+					type: 'typing_stopped',
+					data: { 
+						participant_id: desired_participant_id,
+						participant_type: 'llm'
+					}
+				});
+			}
+		}
 
 		// Create message
 		const [message, messageError] = await createMessage(

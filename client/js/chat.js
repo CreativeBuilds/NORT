@@ -2,6 +2,7 @@ let currentConversationId = null;
 let eventSource = null;
 let lastKnownMessageId = null; // Track the last message ID we've seen
 let currentParticipants = []; // Track current participants
+let currentPersonaId = null;
 
 // Initialize the chat interface
 async function initializeChat() {
@@ -114,16 +115,89 @@ async function loadConversation(conversationId) {
     }
 }
 
+// Add this function to generate a unique gradient based on a string
+function generateGradient(str) {
+    // Create a hash of the string
+    let hash = 0;
+    for (let i = 0; i < str.length; i++) {
+        hash = ((hash << 5) - hash) + str.charCodeAt(i);
+        hash = hash & hash;
+    }
+
+    // Generate three colors based on the hash
+    const hue1 = Math.abs(hash % 360);
+    const hue2 = (hue1 + 40) % 360;
+    const hue3 = (hue2 + 40) % 360;
+
+    return `linear-gradient(45deg, 
+        hsl(${hue1}, 70%, 50%), 
+        hsl(${hue2}, 70%, 50%), 
+        hsl(${hue3}, 70%, 50%)
+    )`;
+}
+
+// Add this simple parser function
+function parseMessageContent(text) {
+    // Replace **text** or *text* with spans
+    return text
+        .replace(/\*\*(.+?)\*\*/g, '<span class="bold">$1</span>')
+        .replace(/\*([^\*]+?)\*/g, '<span class="italic">$1</span>');
+}
+
 // Create a helper function for consistent message display
 function createMessageElement(message, isOwner) {
     const messageDiv = document.createElement('div');
-    messageDiv.className = `message ${message.participant_type === 'user' ? 'user' : 'llm'}`;
+    const isCurrentPersona = message.participant_type === 'user' && message.participant_id === currentPersonaId;
+    messageDiv.className = `message ${message.participant_type} ${isCurrentPersona ? 'current-persona' : ''}`;
     messageDiv.setAttribute('data-message-id', message.id);
+    messageDiv.setAttribute('data-participant-id', message.participant_id);
+
+    // Create message header with profile picture and name
+    const messageHeader = document.createElement('div');
+    messageHeader.className = 'message-header';
+
+    const profilePicture = document.createElement('div');
+    profilePicture.className = 'profile-picture';
+    profilePicture.style.background = generateGradient(message.participant_id + message.participant_name);
+
+    const participantName = document.createElement('span');
+    participantName.className = 'participant-name';
+    participantName.textContent = message.participant_name || 'Unknown';
+
+    messageHeader.appendChild(profilePicture);
+    messageHeader.appendChild(participantName);
+    messageDiv.appendChild(messageHeader);
 
     const contentDiv = document.createElement('div');
     contentDiv.className = 'message-content';
-    contentDiv.textContent = message.content;
+    contentDiv.innerHTML = parseMessageContent(message.content);
+
     messageDiv.appendChild(contentDiv);
+
+    // Add revert button
+    const revertBtn = document.createElement('button');
+    revertBtn.className = 'revert-btn';
+    revertBtn.textContent = 'Revert to this point';
+    revertBtn.title = 'Hold Shift to skip confirmation';
+    revertBtn.onclick = async (e) => {
+        e.preventDefault();
+        if (!e.shiftKey && !confirm('Are you sure you want to revert the chat to this point? All messages after this point will be removed.')) return;
+
+        const messagesContainer = document.getElementById('messages');
+        const allMessages = Array.from(messagesContainer.children);
+        const currentIndex = allMessages.findIndex(m => m.getAttribute('data-message-id') === message.id);
+        
+        // Remove all messages after this one
+        allMessages.slice(currentIndex + 1).forEach(m => m.remove());
+        
+        // Update lastKnownMessageId to this message's ID
+        lastKnownMessageId = parseInt(message.id);
+        
+        // Clear any active typing indicators
+        const typingIndicator = document.querySelector('.typing-indicator');
+        if (typingIndicator) typingIndicator.remove();
+    };
+    messageDiv.appendChild(revertBtn);
 
     // Always add delete button since we're the conversation owner
     const deleteBtn = document.createElement('button');
@@ -535,6 +609,9 @@ async function loadCurrentPersona() {
             return [null, new Error('No current persona data received')];
         }
 
+        // Store the current persona ID
+        currentPersonaId = data.persona.id;
+
         // Update UI with current persona
         const personaName = document.querySelector('#current-persona .persona-name');
         if (personaName) {
@@ -628,19 +705,34 @@ async function setDefaultPersona(id) {
     }
 }
 
-// Handle setting default persona
+// Update handleSetDefaultPersona to refresh message styling
 async function handleSetDefaultPersona(id) {
     const [success, error] = await setDefaultPersona(id);
-    if (error) {
-        alert('Failed to update current persona');
-        return;
-    }
+    if (error) { showError('Failed to update current persona'); return; }
     
-    // Reload personas to update UI
+    // Update current persona ID and reload personas
+    currentPersonaId = id;
     await Promise.all([
         loadUserPersonas(),
         loadCurrentPersona()
     ]);
+
+    // Update message styling for all messages
+    const messages = document.querySelectorAll('.message.user');
+    messages.forEach(messageDiv => {
+        const participantId = messageDiv.getAttribute('data-participant-id');
+        const isCurrentPersona = participantId === id.toString();
+        messageDiv.classList.toggle('current-persona', isCurrentPersona);
+
+        // Update message header direction
+        const messageHeader = messageDiv.querySelector('.message-header');
+        if (messageHeader) messageHeader.style.flexDirection = isCurrentPersona ? 'row-reverse' : 'row';
+
+        // Update delete button position
+        const deleteBtn = messageDiv.querySelector('.delete-btn');
+        if (deleteBtn) deleteBtn.style.right = isCurrentPersona ? '-8px' : 'auto';
+        if (deleteBtn) deleteBtn.style.left = isCurrentPersona ? 'auto' : '-8px';
+    });
 }
 
 // Handle deleting a persona
@@ -899,3 +991,15 @@ function displayConversationParticipants(participants) {
         else llmParticipantsContainer.appendChild(participantElement);
     });
 }
+
+// Add these styles to the existing styles in index.html
+document.head.insertAdjacentHTML('beforeend', `
+<style>
+.message-content .bold {
+    font-weight: 600;
+}
+.message-content .italic {
+    font-style: italic;
+}
+</style>
+`);

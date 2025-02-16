@@ -10,9 +10,13 @@
     "build": "bun build server/index.ts --outdir dist"
   },
   "dependencies": {
+    "@types/dompurify": "^3.2.0",
+    "@types/marked": "^6.0.0",
     "bcrypt": "^5.1.1",
     "bull": "^4.12.2",
+    "dompurify": "^3.2.4",
     "express": "^4.21.2",
+    "marked": "^15.0.7",
     "openai": "^4.83.0",
     "redis": "^4.6.13"
   },

@@ -1,7 +1,7 @@
 import { DatabaseMessage, ChatHistory } from '../classes/chat';
 import { client, ASSISTANT, SYSTEM, USER, END_HEADER_ID, START_HEADER_ID, SEED } from '../constants';
 
-const TIMEOUT_MS = 60000; // Increase to 60 seconds
+const TIMEOUT_MS = 120000; // Increase to 2 minutes
 const MAX_RETRIES = 2;
 
 export class ChatService {
@@ -12,18 +12,29 @@ export class ChatService {
         START_HEADER_ID, END_HEADER_ID,
         "<｜start_header_id｜>",
         "<｜end_header_id｜>",
-        "id:"
+        "<TO="
     ];
 
-    private static validateResponse(text: string): [string, string | null] {
+    private static validateResponse(text: string): [string | null, number | null, Error | null] {
         const trimmed = text.trim();
 
-        // For regular responses, check for stop tokens and truncate at first occurrence
-        let validText = trimmed;
-        let stopIndex = -1;
+        // Check for <TO format
+        const toMatch = trimmed.match(/<TO id=(\d+)/);
+        if (!toMatch) return [null, null, new Error('Response missing <TO format')];
 
+        const targetId = parseInt(toMatch[1]);
+        if (isNaN(targetId)) return [null, null, new Error('Invalid target ID in <TO format')];
+
+        // Extract message content after the <TO tag
+        const contentStart = trimmed.indexOf('>', toMatch.index!) + 1;
+        if (contentStart === 0) return [null, null, new Error('Malformed <TO format')];
+
+        let content = trimmed.slice(contentStart);
+
+        // For regular responses, check for stop tokens and truncate at first occurrence
+        let stopIndex = -1;
         for (const token of this.STOP_TOKENS) {
-            const index = trimmed.indexOf(token);
+            const index = content.indexOf(token);
             if (index !== -1 && (stopIndex === -1 || index < stopIndex)) {
                 stopIndex = index;
             }
@@ -31,15 +42,15 @@ export class ChatService {
 
         // If we found a stop token, truncate the text
         if (stopIndex !== -1) {
-            validText = trimmed.substring(0, stopIndex).trim();
+            content = content.substring(0, stopIndex).trim();
         }
 
         // Only consider it invalid if the truncated text is too short
-        if (validText.length < 20) {
-            return ["", `Response too short after removing stop tokens: ${validText}`];
+        if (content.length < 2) {
+            return [null, null, new Error('Response too short after removing stop tokens')];
         }
 
-        return [validText, null];
+        return [content, targetId, null];
     }
 
     private static async makeRequestWithRetry(
@@ -55,17 +66,7 @@ export class ChatService {
             const text = 'choices' in response ? response.choices[0]?.text : '';
             if (!text) return [null, new Error('No response generated')];
 
-            // Validate and potentially truncate response
-            const [validText, error] = this.validateResponse(text);
-            if (!validText) {
-                if (retryCount < MAX_RETRIES) {
-                    console.log(`Retrying due to invalid response (attempt ${retryCount + 1})`);
-                    return this.makeRequestWithRetry(settings, controller, retryCount + 1);
-                }
-                return [null, new Error(error || 'Invalid response format')];
-            }
-
-            return [validText, null];
+            return [text, null];
         } catch (err) {
             if (err && typeof err === 'object' && 'name' in err && err.name === 'AbortError') {
                 return [null, new Error('Request timed out')];
@@ -85,8 +86,9 @@ export class ChatService {
     static async generateResponse(
         messages: DatabaseMessage[],
         systemPrompt?: string,
-        nextResponderId?: number
-    ): Promise<[string | null, Error | null]> {
+        nextResponderId?: number,
+        abortController?: AbortController
+    ): Promise<[{ content: string; targetId: number } | null, Error | null]> {
         try {
             // Combine system prompt with additional if exists
             const finalSystemPrompt = this.additionalSystemPrompt 
@@ -102,7 +104,8 @@ export class ChatService {
             
             const prompt = promptParts.join('\n');
 
-            const controller = new AbortController();
+            // Use provided abort controller or create a new one
+            const controller = abortController || new AbortController();
             const timeout = setTimeout(() => controller.abort(), TIMEOUT_MS);
 
             try {
@@ -114,7 +117,7 @@ export class ChatService {
                     stream: false,
                     prompt,
                     temperature: isContinuation ? 0.7 : 1.1,
-                    max_tokens: 500,
+                    max_tokens: 333, /* IMPORTANT TO BE 333 */
                     top_p: 0.8,
                     frequency_penalty: 0.1,
                     presence_penalty: 0.1,
@@ -126,15 +129,15 @@ export class ChatService {
                     }
                 };
 
-                const [text, error] = await this.makeRequestWithRetry(settings, controller);
-                if (error) return [null, error];
+                const [text, requestError] = await this.makeRequestWithRetry(settings, controller);
+                if (requestError) return [null, requestError];
                 if (!text) return [null, new Error('No response generated')];
+                // Validate and extract content and target
+                const [content, targetId, validationError] = this.validateResponse("<TO id="+text);
+                if (validationError) return [null, validationError];
+                if (!content || !targetId) return [null, new Error('Failed to extract content or target ID')];
 
-                // For continuations, ensure we don't repeat "I"
-                const finalText = isContinuation && text.startsWith('I ') ? text.slice(2) : text;
-
-                console.log('Generated Response:', '\n', finalText, '\n', '-'.repeat(80));
-                return [finalText.trim(), null];
+                return [{ content, targetId }, null];
 
             } catch (err) {
                 return [null, err instanceof Error ? err : new Error('Failed to generate response')];

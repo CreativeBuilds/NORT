@@ -49,6 +49,62 @@
             word-break: break-word;
             position: relative;
             margin: 2px 15px 2px 2px;
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+
+        .message-header {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 12px;
+            margin-bottom: 2px;
+        }
+
+        .message.user .message-header {
+            flex-direction: row-reverse;
+        }
+
+        .profile-picture {
+            width: 24px;
+            height: 24px;
+            border-radius: 50%;
+            flex-shrink: 0;
+        }
+
+        .participant-name {
+            font-weight: 500;
+            color: inherit;
+            opacity: 0.8;
+        }
+
+        .message.user {
+            background: #007AFF;
+            color: white;
+            align-self: flex-end;
+        }
+
+        .message.llm {
+            background: #E9E9EB;
+            color: black;
+            align-self: flex-start;
+        }
+
+        /* Adjust message alignment based on current persona */
+        .message.user:not(.current-persona) {
+            background: #E9E9EB;
+            color: black;
+            align-self: flex-start;
+        }
+
+        .message.user:not(.current-persona) .message-header {
+            flex-direction: row;
+        }
+
+        .message.user:not(.current-persona) .delete-btn {
+            right: auto;
+            left: -8px;
         }
 
         .message .delete-btn {
@@ -92,18 +148,6 @@
 
         .message.user .delete-btn:hover {
             background: white;
-        }
-
-        .message.user {
-            background: #007AFF;
-            color: white;
-            align-self: flex-end;
-        }
-
-        .message.llm {
-            background: #E9E9EB;
-            color: black;
-            align-self: flex-start;
         }
 
         .typing-indicator {
@@ -582,6 +626,41 @@
             flex-direction: column;
             border: 1px solid #ccc;
             border-radius: 8px;
+        }
+
+        .message .revert-btn {
+            position: absolute;
+            top: -8px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: white;
+            border: 1px solid #ccc;
+            color: #666;
+            padding: 0;
+            font-size: 12px;
+            cursor: pointer;
+            opacity: 0;
+            transition: all 0.2s;
+            z-index: 1;
+            height: 20px;
+            padding: 0 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 10px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+            white-space: nowrap;
+        }
+
+        .message:hover .revert-btn {
+            opacity: 0.7;
+        }
+
+        .message .revert-btn:hover {
+            opacity: 1;
+            background: #fff;
+            transform: translateX(-50%) scale(1.1);
+            box-shadow: 0 2px 5px rgba(0,0,0,0.2);
         }
     </style>
 </head>

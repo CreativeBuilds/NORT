@@ -113,18 +113,21 @@ export class ChatHistory {
                 parts.push(`${headerInfo}${roleToken}${message.content}`);
             }
 
+            parts.push(`${SYSTEM}Start your message with a <TO id={participant_id here} name={participant_name here}> to signify who you are talking to.`)
+
             parts.push(`${SYSTEM}Do not use emojis in your response.`)
 
             // Get last message to check if it's from the same assistant
             const [lastMessage, err] = this.getLastMessage();
-            const isContinuation = !err && lastMessage?.content === '';
+            const isContinuation = !err && lastMessage?.content.trim() === '';
 
             if (isContinuation) {
                 // For continuations, add a newline and continuation marker
-                parts.push(`\nI`);
+                parts.push(`${SYSTEM} Continue talking where you left off from your previous message.`);
+                parts.push(`${ASSISTANT}`);
             } else {
                 // Otherwise add the standard assistant header and token
-                parts.push(`${START_HEADER_ID}id:${this.nextResponderId}${END_HEADER_ID}${ASSISTANT}`);
+                parts.push(`${START_HEADER_ID}id:${this.nextResponderId}${END_HEADER_ID}${ASSISTANT}<TO id=`);
             }
 
             return [parts, null];

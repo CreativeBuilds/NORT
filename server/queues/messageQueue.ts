@@ -4,6 +4,9 @@ import { createMessage, getParticipantById, getConversationMessages, getConversa
 import { ChatService } from '../services/chat.service';
 import { DatabaseMessage } from '../classes/chat';
 
+// Track active generations by participant ID
+const activeGenerations = new Map<number, AbortController>();
+
 // Initialize queue
 const messageQueue = new Queue('message-processing', {
   redis: {
@@ -17,6 +20,17 @@ messageQueue.process('process-llm-response', async (job) => {
   const { conversationId, messageId, participantId } = job.data;
   
   try {
+    // Cancel any existing generation for this participant
+    const existingController = activeGenerations.get(participantId);
+    if (existingController) {
+      existingController.abort();
+      activeGenerations.delete(participantId);
+    }
+
+    // Create new abort controller for this generation
+    const controller = new AbortController();
+    activeGenerations.set(participantId, controller);
+
     // Get LLM participant info
     const [participant, participantError] = await getParticipantById(participantId);
     if (participantError || !participant) throw new Error('Failed to get participant');
@@ -50,8 +64,12 @@ messageQueue.process('process-llm-response', async (job) => {
     const [response, error] = await ChatService.generateResponse(
       databaseMessages,
       participant.metadata?.system_prompt,
-      participantId
+      participantId,
+      controller // Pass the controller to the generate function
     );
+    
+    // Remove the controller from active generations
+    activeGenerations.delete(participantId);
     
     if (error || !response) {
       // Send typing stopped and fail silently
@@ -69,11 +87,23 @@ messageQueue.process('process-llm-response', async (job) => {
     const [message, messageError] = await createMessage(
       conversationId,
       participantId,
-      response,
+      response.content,
       messageId
     );
 
     if (messageError || !message) throw new Error('Failed to create response message');
+
+    // If this was targeted at another agent, check if it's an AI and queue their response
+    if (response.targetId !== participantId) {
+      const [targetParticipant] = await getParticipantById(response.targetId);
+      if (targetParticipant?.type === 'llm') {
+        await messageQueue.add('process-llm-response', {
+          conversationId,
+          messageId: message.id,
+          participantId: response.targetId
+        });
+      }
+    }
 
     // Send message added event with full participant info
     sendSSEEvent(conversationId, {
@@ -99,6 +129,8 @@ messageQueue.process('process-llm-response', async (job) => {
 
     return message;
   } catch (error) {
+    // Remove the controller from active generations on error
+    activeGenerations.delete(participantId);
     // Just throw without sending any events
     throw error;
   }
@@ -108,5 +140,8 @@ messageQueue.process('process-llm-response', async (job) => {
 messageQueue.on('failed', (job, error) => {
   console.error(`Job ${job.id} failed:`, error);
 });
+
+// Export for use in other files
+export { activeGenerations };
 
 export default messageQueue; 
