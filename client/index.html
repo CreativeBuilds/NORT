@@ -9,7 +9,7 @@
             font-family: system-ui, -apple-system, sans-serif;
             margin: 0;
             padding: 20px;
-            max-width: 800px;
+            /* max-width: 800px; */
             margin: 0 auto;
         }
 
@@ -196,6 +196,10 @@
             width: 90%;
             max-width: 500px;
             position: relative;
+            max-height: 90vh;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden; /* Prevent content from spilling out */
         }
 
         .modal-header {
@@ -203,6 +207,14 @@
             justify-content: space-between;
             align-items: center;
             margin-bottom: 20px;
+            background: white;
+            padding-bottom: 15px;
+            margin: -20px -20px 15px -20px;
+            padding: 20px;
+            border-bottom: 1px solid #eee;
+            position: sticky;
+            top: 0;
+            z-index: 1;
         }
 
         .modal-header h3 {
@@ -289,9 +301,10 @@
         }
 
         #llm-list {
-            display: flex;
-            flex-direction: column;
-            gap: 15px;
+            flex: 1;
+            overflow-y: auto;
+            padding-right: 10px;
+            margin: 10px -10px 10px 0; /* Add negative margin to compensate for padding */
         }
 
         .llm-item {
@@ -299,6 +312,11 @@
             border: 1px solid #ccc;
             border-radius: 8px;
             background: #f9f9f9;
+            margin-bottom: 10px;
+        }
+
+        .llm-item:last-child {
+            margin-bottom: 0;
         }
 
         .llm-item-header {
@@ -322,6 +340,8 @@
         }
 
         .llm-item-prompt {
+            max-height: 200px;
+            overflow-y: auto;
             margin-top: 5px;
             font-family: monospace;
             background: #fff;
@@ -329,6 +349,46 @@
             border-radius: 4px;
             border: 1px solid #eee;
             white-space: pre-wrap;
+            font-size: 13px;
+            line-height: 1.4;
+        }
+
+        /* Add scrollbar styling for llm-list */
+        #llm-list::-webkit-scrollbar {
+            width: 8px;
+        }
+
+        #llm-list::-webkit-scrollbar-track {
+            background: #f1f1f1;
+            border-radius: 4px;
+        }
+
+        #llm-list::-webkit-scrollbar-thumb {
+            background: #ccc;
+            border-radius: 4px;
+        }
+
+        #llm-list::-webkit-scrollbar-thumb:hover {
+            background: #999;
+        }
+
+        /* Add scrollbar styling for system prompts */
+        .llm-item-prompt::-webkit-scrollbar {
+            width: 6px;
+        }
+
+        .llm-item-prompt::-webkit-scrollbar-track {
+            background: #f1f1f1;
+            border-radius: 3px;
+        }
+
+        .llm-item-prompt::-webkit-scrollbar-thumb {
+            background: #ddd;
+            border-radius: 3px;
+        }
+
+        .llm-item-prompt::-webkit-scrollbar-thumb:hover {
+            background: #ccc;
         }
 
         #llm-container {
@@ -375,6 +435,9 @@
             display: flex;
             flex-direction: column;
             gap: 10px;
+            overflow-y: auto;
+            max-height: 50vh;
+            padding-right: 10px;
         }
 
         .persona-item {
@@ -416,23 +479,114 @@
             background: #34C759;
         }
 
+        .delete-persona-btn {
+            background: #ff3b30;
+        }
+
         .set-default-btn:disabled {
             background: #ccc;
             cursor: not-allowed;
         }
 
-        .add-persona-section {
-            border-top: 1px solid #ccc;
-            padding-top: 20px;
+        /* Add scrollbar styling */
+        #personas-list::-webkit-scrollbar {
+            width: 8px;
         }
 
-        .add-persona-section h4 {
-            margin: 0 0 15px 0;
+        #personas-list::-webkit-scrollbar-track {
+            background: #f1f1f1;
+            border-radius: 4px;
+        }
+
+        #personas-list::-webkit-scrollbar-thumb {
+            background: #ccc;
+            border-radius: 4px;
+        }
+
+        #personas-list::-webkit-scrollbar-thumb:hover {
+            background: #999;
+        }
+
+        /* Add new styles for the chat layout and participants sidebar */
+        .chat-layout {
+            display: flex;
+            gap: 16px;
+            height: 90vh;
+            /* max-width: 1200px; */
+            margin: 0 auto;
+            padding: 20px;
+        }
+
+        #participants-sidebar {
+            width: 250px;
+            border: 1px solid #ccc;
+            border-radius: 8px;
+            overflow-y: auto;
+            padding: 15px;
+        }
+
+        .participants-section {
+            margin-bottom: 20px;
+        }
+
+        .participants-section h3 {
+            margin: 0 0 12px 0;
+            padding-bottom: 8px;
+            border-bottom: 1px solid #eee;
+            font-size: 14px;
+            color: #666;
+            font-weight: 600;
+        }
+
+        .participant-item {
+            padding: 8px 10px;
+            margin-bottom: 6px;
+            border-radius: 6px;
+            background: #f8f8f8;
+            font-size: 13px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .participant-item:last-child {
+            margin-bottom: 0;
+        }
+
+        .participant-item.user { 
+            border-left: 3px solid #007AFF;
+            background: #f0f7ff;
+        }
+
+        .participant-item.llm { 
+            border-left: 3px solid #34C759;
+            background: #f0fff4;
+        }
+
+        .participant-type-badge {
+            font-size: 11px;
+            padding: 2px 6px;
+            border-radius: 4px;
+            color: white;
+            font-weight: 500;
+            min-width: 32px;
+            text-align: center;
+        }
+
+        .participant-type-badge.user { background: #007AFF; }
+        .participant-type-badge.llm { background: #34C759; }
+
+        #chat-container {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            border: 1px solid #ccc;
+            border-radius: 8px;
         }
     </style>
 </head>
 <body>
-    <div id="login-container">
+    <div id="login-container" style="display: none;">
         <h2>Login</h2>
         <div class="form-group">
             <label for="username">Username</label>
@@ -447,27 +601,40 @@
         <div id="login-error" class="error"></div>
     </div>
 
-    <div id="chat-container" style="display: none;">
-        <div id="chat-header">
-            <div class="header-left">
-                <h2>nort</h2>
-                <div id="current-persona">
-                    <span class="persona-name"></span>
-                    <button id="manage-personas-btn" class="manage-personas-btn">Manage Personas</button>
-                </div>
+    <div class="chat-layout">
+        <div id="participants-sidebar">
+            <div class="participants-section">
+                <h3>User Participants</h3>
+                <div id="user-participants"></div>
             </div>
-            <button id="logout-btn">Logout</button>
+            <div class="participants-section">
+                <h3>AI Participants</h3>
+                <div id="llm-participants"></div>
+            </div>
         </div>
-        <div id="messages"></div>
-        <div id="input-container">
-            <div id="llm-container">
-                <select id="llm-select">
-                    <option value="">Select AI (Optional)</option>
-                </select>
-                <button id="add-llm-btn">+ Add AI</button>
+
+        <div id="chat-container">
+            <div id="chat-header">
+                <div class="header-left">
+                    <h2>nort</h2>
+                    <div id="current-persona">
+                        <span class="persona-name"></span>
+                        <button id="manage-personas-btn" class="manage-personas-btn">Manage Personas</button>
+                    </div>
+                </div>
+                <button id="logout-btn">Logout</button>
             </div>
-            <input type="text" id="message-input" placeholder="Type your message...">
-            <button id="send-btn">Send</button>
+            <div id="messages"></div>
+            <div id="input-container">
+                <div id="llm-container">
+                    <select id="llm-select">
+                        <option value="">Select AI (Optional)</option>
+                    </select>
+                    <button id="add-llm-btn">+ Add AI</button>
+                </div>
+                <input type="text" id="message-input" placeholder="Type your message...">
+                <button id="send-btn">Send</button>
+            </div>
         </div>
     </div>
 

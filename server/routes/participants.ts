@@ -1,5 +1,5 @@
 import { Router, Response } from 'express'
-import { getLLMParticipants, createParticipant, setParticipantPrivacy, cloneParticipant, getParticipantById, getUserPersonas, setDefaultPersona, getCurrentPersona } from '../db'
+import { getLLMParticipants, createParticipant, setParticipantPrivacy, cloneParticipant, getParticipantById, getUserPersonas, setDefaultPersona, getCurrentPersona, getConversationParticipants, getLastSpeaker, softDeletePersona } from '../db'
 import { authenticate } from '../middleware/auth'
 import { AuthenticatedRequest } from '../types/request'
 
@@ -148,6 +148,60 @@ router.post('/llm/:id/clone', authenticate, async (req: AuthenticatedRequest, re
 		if (!participant) { res.status(404).json({ error: 'Participant not found' }); return }
 
 		res.status(201).json({ participant }); return
+	} catch (err) {
+		res.status(500).json({ error: (err as Error).message }); return
+	}
+});
+
+// Get participants for a conversation with optional type filtering
+router.get('/conversation/:conversationId', authenticate, async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+	if (!req.user?.id) { res.status(401).json({ error: 'Unauthorized' }); return }
+
+	const { conversationId } = req.params;
+	const type = req.query.type as 'user' | 'llm' | undefined;
+
+	try {
+		const [participants, error] = await getConversationParticipants(parseInt(conversationId), req.user.id);
+		if (error) { res.status(500).json({ error: error.message }); return }
+		if (!participants) { res.status(404).json({ error: 'No participants found' }); return }
+
+		const filteredParticipants = type ? participants.filter(p => p.type === type) : participants;
+		res.json({ participants: filteredParticipants }); return
+	} catch (err) {
+		res.status(500).json({ error: (err as Error).message }); return
+	}
+});
+
+// Get last speaker in a conversation with optional type filtering
+router.get('/conversation/:conversationId/last-speaker', authenticate, async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+	if (!req.user?.id) { res.status(401).json({ error: 'Unauthorized' }); return }
+
+	const { conversationId } = req.params;
+	const type = req.query.type as 'user' | 'llm' | undefined;
+
+	try {
+		const [participant, error] = await getLastSpeaker(parseInt(conversationId), type);
+		if (error) { res.status(500).json({ error: error.message }); return }
+		if (!participant) { res.status(404).json({ error: 'No last speaker found' }); return }
+
+		res.json({ participant }); return
+	} catch (err) {
+		res.status(500).json({ error: (err as Error).message }); return
+	}
+});
+
+// Delete (soft) a user persona
+router.delete('/user/:id', authenticate, async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+	if (!req.user?.id) { res.status(401).json({ error: 'Unauthorized' }); return }
+
+	const { id } = req.params;
+
+	try {
+		const [success, error] = await softDeletePersona(req.user.id, parseInt(id));
+		if (error) { res.status(500).json({ error: error.message }); return }
+		if (!success) { res.status(404).json({ error: 'Persona not found' }); return }
+
+		res.json({ success: true }); return
 	} catch (err) {
 		res.status(500).json({ error: (err as Error).message }); return
 	}

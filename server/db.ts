@@ -19,6 +19,7 @@ const tableInfo = db.prepare('PRAGMA table_info(participants)').all() as { name:
 const hasPrivateColumn = tableInfo.some(column => column.name === 'private');
 const hasDescriptionColumn = tableInfo.some(column => column.name === 'description');
 const hasIsDefaultColumn = tableInfo.some(column => column.name === 'is_default');
+const hasActiveColumn = tableInfo.some(column => column.name === 'active');
 
 if (!hasPrivateColumn) {
   try {
@@ -44,6 +45,15 @@ if (!hasIsDefaultColumn) {
     console.log('Added is_default column to participants table');
   } catch (error) {
     console.log('is_default column already exists or could not be added:', error);
+  }
+}
+
+if (!hasActiveColumn) {
+  try {
+    db.run('ALTER TABLE participants ADD COLUMN active BOOLEAN DEFAULT 1');
+    console.log('Added active column to participants table');
+  } catch (error) {
+    console.log('Active column already exists or could not be added:', error);
   }
 }
 
@@ -80,6 +90,7 @@ db.run(`
     private BOOLEAN DEFAULT 1,
     description TEXT,
     is_default BOOLEAN DEFAULT 0,
+    active BOOLEAN DEFAULT 1,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
   )
@@ -152,6 +163,7 @@ type Participant = {
   private: boolean;
   description?: string;
   is_default: boolean;
+  active: boolean;
   created_at: string;
 }
 
@@ -312,6 +324,7 @@ export function getParticipantByUserId(userId: number): [Participant | null, Err
         user_id,
         metadata,
         COALESCE(private, 1) as private,
+        active,
         created_at
       FROM participants 
       WHERE user_id = ? AND type = "user" 
@@ -324,7 +337,8 @@ export function getParticipantByUserId(userId: number): [Participant | null, Err
     return [{
       ...participant,
       metadata: typeof participant.metadata === 'string' ? JSON.parse(participant.metadata) : participant.metadata,
-      private: Boolean(participant.private)
+      private: Boolean(participant.private),
+      active: Boolean(participant.active)
     }, null];
   } catch (error) {
     console.error('Error in getParticipantByUserId:', error);
@@ -569,6 +583,7 @@ export function getLLMParticipants(userId?: number): [Participant[] | null, Erro
         user_id,
         metadata,
         COALESCE(private, 1) as private,
+        active,
         created_at
       FROM participants 
       WHERE type = "llm" 
@@ -580,7 +595,8 @@ export function getLLMParticipants(userId?: number): [Participant[] | null, Erro
     return [participants.map(p => ({
       ...p,
       metadata: typeof p.metadata === 'string' ? JSON.parse(p.metadata) : p.metadata,
-      private: Boolean(p.private) // Ensure private is always a boolean
+      private: Boolean(p.private),
+      active: Boolean(p.active)
     })), null];
   } catch (error) {
     console.error('Error in getLLMParticipants:', error);
@@ -598,6 +614,7 @@ export function getParticipantById(id: number): [Participant | null, Error | nul
         user_id,
         metadata,
         COALESCE(private, 1) as private,
+        active,
         created_at
       FROM participants 
       WHERE id = ?
@@ -609,7 +626,8 @@ export function getParticipantById(id: number): [Participant | null, Error | nul
     return [{
       ...participant,
       metadata: typeof participant.metadata === 'string' ? JSON.parse(participant.metadata) : participant.metadata,
-      private: Boolean(participant.private) // Ensure private is always a boolean
+      private: Boolean(participant.private),
+      active: Boolean(participant.active)
     }, null];
   } catch (error) {
     console.error('Error in getParticipantById:', error);
@@ -667,6 +685,7 @@ export function cloneParticipant(participantId: number, userId: number): [Partic
         user_id,
         metadata,
         COALESCE(private, 1) as private,
+        active,
         created_at
       FROM participants 
       WHERE id = ? AND type = "llm"
@@ -700,6 +719,7 @@ export function getConversationParticipants(conversationId: number, userId: numb
         p.user_id,
         p.metadata,
         COALESCE(p.private, 1) as private,
+        p.active,
         p.created_at
       FROM participants p
       JOIN messages m ON m.participant_id = p.id
@@ -713,7 +733,8 @@ export function getConversationParticipants(conversationId: number, userId: numb
     return [participants.map(p => ({
       ...p,
       metadata: typeof p.metadata === 'string' ? JSON.parse(p.metadata) : p.metadata,
-      private: Boolean(p.private)
+      private: Boolean(p.private),
+      active: Boolean(p.active)
     })), null];
   } catch (error) {
     console.error('Error in getConversationParticipants:', error);
@@ -734,9 +755,10 @@ export function getUserPersonas(userId: number): [Participant[] | null, Error | 
         COALESCE(private, 1) as private,
         description,
         is_default,
+        COALESCE(active, 1) as active,
         created_at
       FROM participants 
-      WHERE user_id = ? AND type = "user"
+      WHERE user_id = ? AND type = "user" AND COALESCE(active, 1) = 1
       ORDER BY is_default DESC, name ASC
     `);
     
@@ -746,7 +768,8 @@ export function getUserPersonas(userId: number): [Participant[] | null, Error | 
       ...p,
       metadata: typeof p.metadata === 'string' ? JSON.parse(p.metadata) : p.metadata,
       private: Boolean(p.private),
-      is_default: Boolean(p.is_default)
+      is_default: Boolean(p.is_default),
+      active: Boolean(p.active)
     })), null];
   } catch (error) {
     console.error('Error in getUserPersonas:', error);
@@ -767,6 +790,7 @@ export function getCurrentPersona(userId: number): [Participant | null, Error | 
         COALESCE(private, 1) as private,
         description,
         is_default,
+        active,
         created_at
       FROM participants 
       WHERE user_id = ? AND type = "user" AND is_default = 1
@@ -781,7 +805,8 @@ export function getCurrentPersona(userId: number): [Participant | null, Error | 
       ...participant,
       metadata: typeof participant.metadata === 'string' ? JSON.parse(participant.metadata) : participant.metadata,
       private: Boolean(participant.private),
-      is_default: Boolean(participant.is_default)
+      is_default: Boolean(participant.is_default),
+      active: Boolean(participant.active)
     }, null];
   } catch (error) {
     console.error('Error in getCurrentPersona:', error);
@@ -843,6 +868,47 @@ export function getMessageById(messageId: number): [Message | null, Error | null
     return [message, null];
   } catch (error) {
     return [null, error as Error];
+  }
+}
+
+export function getLastSpeaker(conversationId: number, type?: ParticipantType): [Participant | null, Error | null] {
+    try {
+        const typeFilter = type ? 'AND p.type = ?' : '';
+        const stmt = db.prepare(`
+            SELECT p.* FROM participants p
+            INNER JOIN messages m ON m.participant_id = p.id
+            WHERE m.conversation_id = ? ${typeFilter}
+            ORDER BY m.created_at DESC
+            LIMIT 1
+        `);
+
+        const participant = type ? 
+            stmt.get(conversationId, type) as Participant | null :
+            stmt.get(conversationId) as Participant | null;
+
+        return [participant, null];
+    } catch (error) {
+        return [null, error as Error];
+    }
+}
+
+export function softDeletePersona(userId: number, personaId: number): [boolean, Error | null] {
+  try {
+    // First verify the persona belongs to the user and is not default
+    const verifyStmt = db.prepare('SELECT id, is_default FROM participants WHERE id = ? AND user_id = ? AND type = "user"');
+    const persona = verifyStmt.get(personaId, userId) as { id: number, is_default: number } | null;
+    
+    if (!persona) return [false, new Error('Persona not found or not owned by user')];
+    if (persona.is_default) return [false, new Error('Cannot delete the default persona')];
+    
+    // Soft delete by setting active = false
+    const stmt = db.prepare('UPDATE participants SET active = 0 WHERE id = ?');
+    const result = stmt.run(personaId);
+    
+    return [result.changes > 0, null];
+  } catch (error) {
+    console.error('Error in softDeletePersona:', error);
+    return [false, error as Error];
   }
 }
 

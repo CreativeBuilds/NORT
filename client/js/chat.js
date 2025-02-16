@@ -79,17 +79,35 @@ async function sendMessage() {
 // Load existing conversation
 async function loadConversation(conversationId) {
     try {
-        const response = await fetch(`${window.API_BASE}/chat/${conversationId}`, {
-            headers: {
-                'Authorization': `Bearer ${window.getAuthToken()}`
-            }
-        });
+        const [conversationResponse, participantsResponse, lastSpeakerResponse] = await Promise.all([
+            fetch(`${window.API_BASE}/chat/${conversationId}`, {
+                headers: { 'Authorization': `Bearer ${window.getAuthToken()}` }
+            }),
+            loadConversationParticipants(conversationId),
+            fetch(`${window.API_BASE}/participants/conversation/${conversationId}/last-speaker?type=llm`, {
+                headers: { 'Authorization': `Bearer ${window.getAuthToken()}` }
+            })
+        ]);
 
-        if (!response.ok) throw new Error('Failed to load conversation');
+        if (!conversationResponse.ok) throw new Error('Failed to load conversation');
 
-        const data = await response.json();
+        const data = await conversationResponse.json();
         displayMessages(data.messages);
         connectToSSE();
+
+        // Try to auto-select the last AI speaker if available
+        if (lastSpeakerResponse.ok) {
+            const lastSpeakerData = await lastSpeakerResponse.json();
+            if (lastSpeakerData.participant) {
+                const llmSelect = document.getElementById('llm-select');
+                if (llmSelect) {
+                    // Wait for participants to load to ensure the option exists
+                    setTimeout(() => {
+                        llmSelect.value = lastSpeakerData.participant.id;
+                    }, 100);
+                }
+            }
+        }
     } catch (error) {
         console.error('Error loading conversation:', error);
         alert('Failed to load conversation');
@@ -199,6 +217,47 @@ function handleSSEEvent(event) {
         case 'message_added': {
             const message = event.data.message;
             console.log('Adding message:', message); // Debug log
+
+            // Check if we need to add a new participant
+            if (message.participant_id) {
+                const userParticipants = document.getElementById('user-participants');
+                const llmParticipants = document.getElementById('llm-participants');
+                const existingParticipant = 
+                    userParticipants.querySelector(`[data-participant-id="${message.participant_id}"]`) ||
+                    llmParticipants.querySelector(`[data-participant-id="${message.participant_id}"]`);
+
+                if (!existingParticipant) {
+                    const participantElement = document.createElement('div');
+                    participantElement.className = `participant-item ${message.participant_type}`;
+                    participantElement.setAttribute('data-participant-id', message.participant_id);
+                    
+                    const badge = document.createElement('span');
+                    badge.className = `participant-type-badge ${message.participant_type}`;
+                    badge.textContent = message.participant_type.toUpperCase();
+                    
+                    const name = document.createElement('span');
+                    name.textContent = message.participant_name || 'Unknown Participant';
+                    
+                    participantElement.appendChild(badge);
+                    participantElement.appendChild(name);
+                    
+                    if (message.participant_type === 'user') {
+                        userParticipants.appendChild(participantElement);
+                    } else {
+                        llmParticipants.appendChild(participantElement);
+                        
+                        // Also add to the LLM select if it's an AI participant
+                        const llmSelect = document.getElementById('llm-select');
+                        if (llmSelect && !llmSelect.querySelector(`option[value="${message.participant_id}"]`)) {
+                            const option = document.createElement('option');
+                            option.value = message.participant_id;
+                            option.textContent = message.participant_name || 'Unknown AI';
+                            llmSelect.appendChild(option);
+                        }
+                    }
+                }
+            }
+
             const messageElement = createMessageElement(message, message.participant_type === 'user');
             messagesContainer.appendChild(messageElement);
             messageElement.scrollIntoView({ behavior: 'smooth' });
@@ -236,6 +295,12 @@ function handleSSEEvent(event) {
         case 'message_deleted':
             const messageElement = document.querySelector(`[data-message-id="${event.data.message_id}"]`);
             if (messageElement) messageElement.remove();
+            break;
+
+        case 'participant_added':
+        case 'participant_removed':
+        case 'participant_updated':
+            if (currentConversationId) loadConversationParticipants(currentConversationId);
             break;
     }
 }
@@ -508,6 +573,7 @@ function displayUserPersonas(personas) {
                     <button class="set-default-btn" onclick="handleSetDefaultPersona(${persona.id})" ${persona.is_default ? 'disabled' : ''}>
                         ${persona.is_default ? 'Current' : 'Set as Current'}
                     </button>
+                    ${!persona.is_default ? `<button class="delete-persona-btn" onclick="handleDeletePersona(${persona.id})">Delete</button>` : ''}
                 </div>
             </div>
             <div class="persona-item-description">${persona.description || ''}</div>
@@ -517,7 +583,7 @@ function displayUserPersonas(personas) {
 }
 
 // Create new user persona
-async function createUserPersona(name, description) {
+async function createUserPersona(name, description, isDefault = false) {
     try {
         const response = await fetch(`${window.API_BASE}/participants/user`, {
             method: 'POST',
@@ -527,7 +593,8 @@ async function createUserPersona(name, description) {
             },
             body: JSON.stringify({
                 name,
-                description
+                description,
+                isDefault
             })
         });
 
@@ -576,6 +643,35 @@ async function handleSetDefaultPersona(id) {
     ]);
 }
 
+// Handle deleting a persona
+async function handleDeletePersona(id) {
+    if (!confirm('Are you sure you want to delete this persona?')) return;
+
+    try {
+        const response = await fetch(`${window.API_BASE}/participants/user/${id}`, {
+            method: 'DELETE',
+            headers: {
+                'Authorization': `Bearer ${window.getAuthToken()}`
+            }
+        });
+
+        if (!response.ok) {
+            const error = await response.json();
+            showError(error.error || 'Failed to delete persona');
+            return;
+        }
+
+        // Reload personas to update UI
+        await Promise.all([
+            loadUserPersonas(),
+            loadCurrentPersona()
+        ]);
+    } catch (error) {
+        console.error('Error deleting persona:', error);
+        showError('Failed to delete persona');
+    }
+}
+
 // Event Listeners
 document.addEventListener('DOMContentLoaded', () => {
     // Initialize chat interface
@@ -609,7 +705,7 @@ document.addEventListener('DOMContentLoaded', () => {
             return;
         }
 
-        const [participant, error] = await createUserPersona(name, description);
+        const [participant, error] = await createUserPersona(name, description, true);
         if (error) {
             alert('Failed to create persona');
             return;
@@ -619,7 +715,10 @@ document.addEventListener('DOMContentLoaded', () => {
         document.getElementById('persona-name').value = '';
         document.getElementById('persona-description').value = '';
 
-        // Reload personas
+        // Close the modal
+        document.getElementById('manage-personas-modal').classList.remove('active');
+
+        // Reload personas and current persona
         await Promise.all([
             loadUserPersonas(),
             loadCurrentPersona()
@@ -683,8 +782,24 @@ document.addEventListener('DOMContentLoaded', () => {
         document.getElementById('llm-temperature').value = '0.7';
         document.getElementById('llm-private').checked = true;
         
-        // Reload participants
-        await loadParticipants();
+        // Store the current selection before reloading
+        const llmSelect = document.getElementById('llm-select');
+        const previousSelection = llmSelect ? llmSelect.value : null;
+        
+        // Reload participants and handle selection
+        const [participants] = await loadParticipants();
+        
+        // Wait for a short delay to ensure DOM is updated
+        await new Promise(resolve => setTimeout(resolve, 50));
+        
+        // If we have a new participant, select it, otherwise restore previous selection
+        if (llmSelect) {
+            if (participant) {
+                llmSelect.value = participant.id;
+            } else if (previousSelection) {
+                llmSelect.value = previousSelection;
+            }
+        }
     });
 });
 
@@ -712,6 +827,7 @@ async function handleTogglePrivacy(id, makePrivate) {
 
 // Export functions for global use
 window.handleSetDefaultPersona = handleSetDefaultPersona;
+window.handleDeletePersona = handleDeletePersona;
 
 async function deleteMessage(conversationId, messageId) {
     try {
@@ -736,4 +852,50 @@ async function deleteMessage(conversationId, messageId) {
 
 function showError(message) {
     alert(message);
+}
+
+// Load conversation participants
+async function loadConversationParticipants(conversationId) {
+    try {
+        const response = await fetch(`${window.API_BASE}/participants/conversation/${conversationId}`, {
+            headers: { 'Authorization': `Bearer ${window.getAuthToken()}` }
+        });
+
+        if (!response.ok) throw new Error('Failed to load participants');
+
+        const data = await response.json();
+        displayConversationParticipants(data.participants);
+        return [data.participants, null];
+    } catch (error) {
+        console.error('Error loading conversation participants:', error);
+        return [null, error];
+    }
+}
+
+// Display conversation participants in the sidebar
+function displayConversationParticipants(participants) {
+    const userParticipantsContainer = document.getElementById('user-participants');
+    const llmParticipantsContainer = document.getElementById('llm-participants');
+    
+    userParticipantsContainer.innerHTML = '';
+    llmParticipantsContainer.innerHTML = '';
+
+    participants.forEach(participant => {
+        const participantElement = document.createElement('div');
+        participantElement.className = `participant-item ${participant.type}`;
+        participantElement.setAttribute('data-participant-id', participant.id);
+        
+        const badge = document.createElement('span');
+        badge.className = `participant-type-badge ${participant.type}`;
+        badge.textContent = participant.type.toUpperCase();
+        
+        const name = document.createElement('span');
+        name.textContent = participant.name;
+        
+        participantElement.appendChild(badge);
+        participantElement.appendChild(name);
+        
+        if (participant.type === 'user') userParticipantsContainer.appendChild(participantElement);
+        else llmParticipantsContainer.appendChild(participantElement);
+    });
 }

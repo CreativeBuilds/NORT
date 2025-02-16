@@ -12,25 +12,34 @@ export class ChatService {
         START_HEADER_ID, END_HEADER_ID,
         "<｜start_header_id｜>",
         "<｜end_header_id｜>",
-        "id:",
-        "\nHuman:", "\nAssistant:", "\nSystem:"
+        "id:"
     ];
 
-    private static validateResponse(text: string): [boolean, string | null] {
+    private static validateResponse(text: string): [string, string | null] {
         const trimmed = text.trim();
-        
-        // For continuations, only validate basic formatting
-        if (trimmed.startsWith('I ') || trimmed.startsWith('I\n')) {
-            return [true, null];
-        }
 
-        // For regular responses, check for stop tokens
+        // For regular responses, check for stop tokens and truncate at first occurrence
+        let validText = trimmed;
+        let stopIndex = -1;
+
         for (const token of this.STOP_TOKENS) {
-            if (trimmed.includes(token)) {
-                return [false, `Response contained invalid token: ${token}`];
+            const index = trimmed.indexOf(token);
+            if (index !== -1 && (stopIndex === -1 || index < stopIndex)) {
+                stopIndex = index;
             }
         }
-        return [true, null];
+
+        // If we found a stop token, truncate the text
+        if (stopIndex !== -1) {
+            validText = trimmed.substring(0, stopIndex).trim();
+        }
+
+        // Only consider it invalid if the truncated text is too short
+        if (validText.length < 20) {
+            return ["", `Response too short after removing stop tokens: ${validText}`];
+        }
+
+        return [validText, null];
     }
 
     private static async makeRequestWithRetry(
@@ -46,9 +55,9 @@ export class ChatService {
             const text = 'choices' in response ? response.choices[0]?.text : '';
             if (!text) return [null, new Error('No response generated')];
 
-            // Validate response for stop tokens
-            const [isValid, error] = this.validateResponse(text);
-            if (!isValid) {
+            // Validate and potentially truncate response
+            const [validText, error] = this.validateResponse(text);
+            if (!validText) {
                 if (retryCount < MAX_RETRIES) {
                     console.log(`Retrying due to invalid response (attempt ${retryCount + 1})`);
                     return this.makeRequestWithRetry(settings, controller, retryCount + 1);
@@ -56,7 +65,7 @@ export class ChatService {
                 return [null, new Error(error || 'Invalid response format')];
             }
 
-            return [text, null];
+            return [validText, null];
         } catch (err) {
             if (err && typeof err === 'object' && 'name' in err && err.name === 'AbortError') {
                 return [null, new Error('Request timed out')];
@@ -113,7 +122,7 @@ export class ChatService {
                     stop: this.STOP_TOKENS,
                     provider: {
                         order: ["Targon"],
-                        allow_fallbacks: true
+                        allow_fallbacks: false
                     }
                 };
 
