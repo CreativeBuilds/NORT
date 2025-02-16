@@ -145,11 +145,4 @@ export class ChatService {
             return [null, error instanceof Error ? error : new Error('Failed to generate response')];
         }
     }
-
-    private static buildPrompt(messages: DatabaseMessage[], systemPrompt?: string, nextResponderId?: number): string {
-        const history = new ChatHistory(messages, systemPrompt, nextResponderId);
-        const [promptParts, err] = history.toPromptParts();
-        if (err) throw err;
-        return promptParts.join('\n');
-    }
 } 
