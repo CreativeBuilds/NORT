@@ -174,31 +174,6 @@ function createMessageElement(message, isOwner) {
 
     messageDiv.appendChild(contentDiv);
 
-    // Add revert button
-    const revertBtn = document.createElement('button');
-    revertBtn.className = 'revert-btn';
-    revertBtn.textContent = 'Revert to this point';
-    revertBtn.title = 'Hold Shift to skip confirmation';
-    revertBtn.onclick = async (e) => {
-        e.preventDefault();
-        if (!e.shiftKey && !confirm('Are you sure you want to revert the chat to this point? All messages after this point will be removed.')) return;
-
-        const messagesContainer = document.getElementById('messages');
-        const allMessages = Array.from(messagesContainer.children);
-        const currentIndex = allMessages.findIndex(m => m.getAttribute('data-message-id') === message.id);
-        
-        // Remove all messages after this one
-        allMessages.slice(currentIndex + 1).forEach(m => m.remove());
-        
-        // Update lastKnownMessageId to this message's ID
-        lastKnownMessageId = parseInt(message.id);
-        
-        // Clear any active typing indicators
-        const typingIndicator = document.querySelector('.typing-indicator');
-        if (typingIndicator) typingIndicator.remove();
-    };
-    messageDiv.appendChild(revertBtn);
-
     // Always add delete button since we're the conversation owner
     const deleteBtn = document.createElement('button');
     deleteBtn.className = 'delete-btn';
